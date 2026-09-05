@@ -1,0 +1,33 @@
+# Java / Maven
+target/
+*.class
+
+# Node (for when frontend work starts)
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Env
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code local session state
+.claude/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
