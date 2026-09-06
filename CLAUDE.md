@@ -123,6 +123,29 @@ noted below.
   not part of docker-compose — same reasoning as the MySQL container. `KAFKA_ADVERTISED_LISTENERS`
   must be `localhost:9092` (not the container's internal address), same class of fix as the Eureka
   hostname issue, since our services run on the host, not inside Docker.
+- **Not-found and business-rule errors now map to real HTTP statuses, not bare 500s.** Every
+  service that had `.orElseThrow(() -> new RuntimeException(...))` for a missing entity now throws
+  a per-service `com.services.exception.ResourceNotFoundException` (`@ResponseStatus(NOT_FOUND)`) —
+  same minimal technique as `SeatNotAvailableException`/`SeatUnavailableException` from the
+  concurrency work, deliberately duplicated per service rather than centralized in `common-lib`
+  (same reasoning as duplicating Feign clients/fallbacks: `common-lib` is DTOs only, no business
+  logic, and each service stays independently deployable). `user-service` additionally got
+  `EmailAlreadyRegisteredException` (409, for duplicate signup) and `InvalidCredentialsException`
+  (401, for bad login) — previously both were also a bare `RuntimeException` → 500. No
+  `@RestControllerAdvice` was needed anywhere; `@ResponseStatus` on the exception class is
+  sufficient and matches the pattern already proven working.
+- **`user-service`'s `SecurityConfig` was silently turning every error response into a 403**,
+  including the pre-existing bare-500 case, and had been since Stage 6 — nobody had tested a
+  failure path (bad password, duplicate email) directly against the service until this pass.
+  `.anyRequest().authenticated()` also gates Spring Boot's own internal `/error` forward (the
+  dispatch it uses to render whatever status code an exception produced) — since `/error` was never
+  in the `permitAll` list, that internal dispatch got treated as an unauthenticated request and
+  denied with `Http403ForbiddenEntryPoint`, masking the real status (401, 409, or the old 500) with
+  a plain 403. Fixed by adding `/error` alongside `/auth/**` in `permitAll()`. Confirmed via
+  `logging.level.org.springframework.security=DEBUG`, which showed the exact sequence: `Securing
+  POST /auth/login` → passes → `Securing GET /error` → `Http403ForbiddenEntryPoint: ... Rejecting
+  access`. Any Spring Security config with a catch-all `.anyRequest().authenticated()` needs `/error`
+  explicitly permitted, or every error response through that filter chain silently becomes 403.
 - **Seat booking now uses pessimistic locking (`SELECT ... FOR UPDATE`), not optimistic.**
   `SeatInstanceRepository.findByIdForUpdate` (`@Lock(LockModeType.PESSIMISTIC_WRITE)`) plus a
   `@Transactional` `SeatInstanceService.holdSeat` — the lock is only meaningful for the life of one
@@ -192,8 +215,6 @@ noted below.
   `flight-ops-service.getAllFlights`/`getAllFlightInstances`) make one Feign call per row — real
   N+1, deferred until it's actually slow enough to matter.
 - No tests anywhere yet.
-- Not-found cases everywhere throw a generic `RuntimeException` (→ bare 500), not a proper
-  exception mapped to 404.
 - No backend service reads the `X-User-Id`/`X-User-Roles` headers `api-gateway` forwards — no
   role-based authorization exists, just authentication at the edge.
 - No circuit breakers yet on the real Feign calls that now exist.

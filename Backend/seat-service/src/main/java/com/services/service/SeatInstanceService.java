@@ -3,6 +3,7 @@ package com.services.service;
 import com.services.dto.SeatInstanceDto;
 import com.services.entity.SeatInstance;
 import com.services.entity.SeatStatus;
+import com.services.exception.ResourceNotFoundException;
 import com.services.exception.SeatNotAvailableException;
 import com.services.mapper.SeatInstanceMapper;
 import com.services.repository.SeatInstanceRepository;
@@ -27,7 +28,7 @@ public class SeatInstanceService {
 
     public SeatInstanceDto getSeatInstanceById(Long id) {
         SeatInstance seatInstance = seatInstanceRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("SeatInstance not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("SeatInstance not found with id: " + id));
         return SeatInstanceMapper.toDto(seatInstance);
     }
 
@@ -38,7 +39,7 @@ public class SeatInstanceService {
     @Transactional
     public SeatInstanceDto holdSeat(Long id) {
         SeatInstance seatInstance = seatInstanceRepository.findByIdForUpdate(id)
-                .orElseThrow(() -> new RuntimeException("SeatInstance not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("SeatInstance not found with id: " + id));
 
         if (seatInstance.getStatus() != SeatStatus.AVAILABLE) {
             throw new SeatNotAvailableException(

@@ -5,6 +5,7 @@ import com.common.event.PaymentCompletedEvent;
 import com.services.entity.Payment;
 import com.services.entity.PaymentStatus;
 import com.services.event.PaymentEventProducer;
+import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.PaymentMapper;
 import com.services.repository.PaymentRepository;
 import org.springframework.stereotype.Service;
@@ -31,13 +32,13 @@ public class PaymentService {
 
     public PaymentDto getPaymentById(Long id) {
         Payment payment = paymentRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Payment not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found with id: " + id));
         return PaymentMapper.toDto(payment);
     }
 
     public PaymentDto confirmPayment(Long id) {
         Payment payment = paymentRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Payment not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found with id: " + id));
 
         payment.setStatus(PaymentStatus.SUCCESS);
         Payment saved = paymentRepository.save(payment);

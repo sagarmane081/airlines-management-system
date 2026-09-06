@@ -2,6 +2,7 @@ package com.services.service;
 
 import com.common.dto.FareDto;
 import com.services.entity.Fare;
+import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.FareMapper;
 import com.services.repository.FareRepository;
 import org.springframework.stereotype.Service;
@@ -24,7 +25,7 @@ public class FareService {
 
     public FareDto getFareById(Long id) {
         Fare fare = fareRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Fare not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Fare not found with id: " + id));
         return FareMapper.toDto(fare);
     }
 

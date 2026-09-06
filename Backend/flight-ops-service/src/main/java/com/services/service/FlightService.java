@@ -8,6 +8,7 @@ import com.services.dto.FlightDto;
 import com.services.dto.FlightInstanceDto;
 import com.services.entity.Flight;
 import com.services.entity.FlightInstance;
+import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.FlightMapper;
 import com.services.repository.FlightInstanceRepository;
 import com.services.repository.FlightRepository;
@@ -47,7 +48,7 @@ public class FlightService {
 
     public FlightDto getFlightById(Long id) {
         Flight flight = flightRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Flight not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Flight not found with id: " + id));
         return enrichFlight(flight);
     }
 
@@ -58,7 +59,7 @@ public class FlightService {
     public FlightInstanceDto createFlightInstance(FlightInstanceDto instanceDto) {
         Long flightId = instanceDto.getFlight().getId();
         Flight flight = flightRepository.findById(flightId)
-                .orElseThrow(() -> new RuntimeException("Flight not found with id: " + flightId));
+                .orElseThrow(() -> new ResourceNotFoundException("Flight not found with id: " + flightId));
 
         FlightInstance instance = new FlightInstance();
         instance.setFlight(flight);
@@ -72,7 +73,7 @@ public class FlightService {
 
     public FlightInstanceDto getFlightInstanceById(Long id) {
         FlightInstance instance = flightInstanceRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("FlightInstance not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("FlightInstance not found with id: " + id));
         return FlightMapper.toDto(instance, enrichFlight(instance.getFlight()));
     }
 

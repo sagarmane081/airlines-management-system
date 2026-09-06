@@ -17,7 +17,7 @@ without re-reading the whole conversation history.
 | 8 | Circuit breakers (Resilience4j) on the real Feign calls that now exist | ✅ Done |
 | 9 | Kafka + the booking/payment saga (`booking-service`, `payment-service`) | ✅ Done |
 | 10 | `notification-service` — pure Kafka consumer | ✅ Done |
-| 11 | Harden — seat concurrency ✅, idempotency, real exception handling, N+1 fixes, tests | 🟨 In progress |
+| 11 | Harden — seat concurrency ✅, real exception handling ✅, idempotency, N+1 fixes, tests | 🟨 In progress |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -68,8 +68,19 @@ real negative control by temporarily reverting to a plain `findById` and watchin
 fail reproducibly (10 of 15 "won"). And live, end-to-end, through the real HTTP stack: 5 concurrent
 `POST /api/bookings` requests against one seat produced exactly one 201 and four clean 409s.
 
-Remaining in Stage 11: idempotency, real exception handling (still bare `RuntimeException` →
-500 everywhere outside the two new 409 paths), the N+1 Feign calls, and broader test coverage.
+Real exception handling is also done: every service's `.orElseThrow(() -> new RuntimeException(...))`
+for a missing entity now throws a `ResourceNotFoundException` (404) — same `@ResponseStatus`
+technique as the two seat-concurrency exceptions, no `@RestControllerAdvice` needed anywhere.
+`user-service` also got `EmailAlreadyRegisteredException` (409) and `InvalidCredentialsException`
+(401) for signup/login. Along the way this surfaced a real, pre-existing bug: `user-service`'s
+`SecurityConfig` had `.anyRequest().authenticated()` with no exception for `/error`, so Spring
+Boot's internal error-rendering dispatch was itself getting blocked as "unauthenticated," turning
+every error response — the new ones and the old bare 500s alike — into a flat 403. Nobody had
+tested a failure path directly against the service since Stage 6. Fixed by permitting `/error`
+alongside `/auth/**`. Verified live: 404 across all 8 REST services' not-found cases, 401 for a bad
+password, 409 for a duplicate signup email, 201/200 for the happy path.
+
+Remaining in Stage 11: idempotency, the N+1 Feign calls, and broader test coverage.
 
 The Stage 9 saga verified end-to-end: `POST /api/bookings` (booking-service, Feign → pricing-service
 for the real price, Feign → payment-service to initiate a PENDING payment) →

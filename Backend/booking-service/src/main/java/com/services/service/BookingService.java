@@ -8,6 +8,7 @@ import com.services.client.SeatClient;
 import com.services.dto.BookingDto;
 import com.services.entity.Booking;
 import com.services.entity.BookingStatus;
+import com.services.exception.ResourceNotFoundException;
 import com.services.exception.SeatUnavailableException;
 import com.services.mapper.BookingMapper;
 import com.services.repository.BookingRepository;
@@ -68,7 +69,7 @@ public class BookingService {
 
     public BookingDto getBookingById(Long id) {
         Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Booking not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + id));
         return BookingMapper.toDto(booking);
     }
 }

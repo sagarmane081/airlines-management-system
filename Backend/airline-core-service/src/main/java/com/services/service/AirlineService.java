@@ -4,6 +4,7 @@ import com.common.dto.AirlineDto;
 import com.common.dto.CityDto;
 import com.services.client.LocationClient;
 import com.services.entity.Airline;
+import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.AirlineMapper;
 import com.services.repository.AirlineRepository;
 import org.springframework.stereotype.Service;
@@ -29,7 +30,7 @@ public class AirlineService {
 
     public AirlineDto getAirlineById(Long id) {
         Airline airline = airlineRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Airline not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Airline not found with id: " + id));
         CityDto city = locationClient.getCityById(airline.getHeadquartersCityId());
         return AirlineMapper.toDto(airline, city);
     }

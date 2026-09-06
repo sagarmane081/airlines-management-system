@@ -6,6 +6,8 @@ import com.services.dto.LoginResponse;
 import com.services.dto.SignupRequest;
 import com.services.dto.UserResponse;
 import com.services.entity.User;
+import com.services.exception.EmailAlreadyRegisteredException;
+import com.services.exception.InvalidCredentialsException;
 import com.services.repository.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -25,7 +27,7 @@ public class AuthService {
 
     public UserResponse signup(SignupRequest request) {
         if (userRepository.findByEmail(request.getEmail()).isPresent()) {
-            throw new RuntimeException("Email already registered: " + request.getEmail());
+            throw new EmailAlreadyRegisteredException("Email already registered: " + request.getEmail());
         }
 
         User user = new User();
@@ -46,10 +48,10 @@ public class AuthService {
 
     public LoginResponse login(LoginRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("Invalid email or password"));
+                .orElseThrow(() -> new InvalidCredentialsException("Invalid email or password"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            throw new RuntimeException("Invalid email or password");
+            throw new InvalidCredentialsException("Invalid email or password");
         }
 
         String token = jwtUtil.generateToken(user.getId(), user.getEmail(), user.getRole().name());

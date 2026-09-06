@@ -2,6 +2,7 @@ package com.services.service;
 
 import com.common.dto.CityDto;
 import com.services.entity.City;
+import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.CityMapper;
 import com.services.repository.CityRepository;
 import org.springframework.stereotype.Service;
@@ -25,7 +26,7 @@ public class CityService {
 
     public CityDto getCityById(Long id) {
         City city = cityRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("City not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("City not found with id: " + id));
         return CityMapper.toDto(city);
     }
 

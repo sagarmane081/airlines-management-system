@@ -2,6 +2,7 @@ package com.services.service;
 
 import com.services.dto.AncillaryDto;
 import com.services.entity.Ancillary;
+import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.AncillaryMapper;
 import com.services.repository.AncillaryRepository;
 import org.springframework.stereotype.Service;
@@ -24,7 +25,7 @@ public class AncillaryService {
 
     public AncillaryDto getAncillaryById(Long id) {
         Ancillary ancillary = ancillaryRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Ancillary not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Ancillary not found with id: " + id));
         return AncillaryMapper.toDto(ancillary);
     }
 
