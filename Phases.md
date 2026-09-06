@@ -18,7 +18,7 @@ without re-reading the whole conversation history.
 | 9 | Kafka + the booking/payment saga (`booking-service`, `payment-service`) | ✅ Done |
 | 10 | `notification-service` — pure Kafka consumer | ✅ Done |
 | 11 | Harden — seat concurrency, real exception handling, idempotency, N+1 fixes, tests | ✅ Done |
-| 12 | Further hardening — transactional outbox ✅, Actuator/Micrometer, Testcontainers, distributed tracing | 🟨 In progress |
+| 12 | Further hardening — transactional outbox ✅, Actuator/Micrometer ✅, Testcontainers, distributed tracing | 🟨 In progress |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -90,10 +90,24 @@ Kafka became unreachable. Also unit-tested (`OutboxRelayTest` per service): succ
 marks the row published, a failed publish leaves it unpublished without crashing the batch, and
 one failure doesn't block the rest of the batch from relaying.
 
-Remaining Stage 12 candidates, roughly in planned order: Actuator + Micrometer (health/metrics
-endpoints), Testcontainers (retrofit onto `SeatInstanceConcurrencyTest`, which currently points at
-the real dev MySQL), then distributed tracing (Micrometer Tracing + OpenTelemetry) once there's
-more Actuator-instrumented infrastructure to trace across.
+Actuator + Micrometer are also done, added to all 12 services with a web server (everything except
+`notification-service`, which deliberately has none). Shared exposure config
+(`health,info,metrics`, full health detail) lives in `config-repo/application.yml` like every other
+cross-service setting. Two real findings along the way, both from checking jar contents directly
+rather than trusting older docs: Spring Boot 4 moved the entire Health API to a new module and
+package (`org.springframework.boot.health.contributor`, not `org.springframework.boot.actuate.
+health`); and Spring Boot 4.0.2 ships no built-in Kafka health contributor at all, so a broken
+Kafka connection would leave `/actuator/health` reporting UP while the outbox relay and every
+consumer were actually degraded. Fixed with a small custom `KafkaHealthIndicator` in
+`payment-service`/`booking-service` (the two producers) — verified live: reports the real cluster
+ID when Kafka's up, flips to DOWN when it's stopped. First version used try-with-resources and hung
+30+ seconds on a Kafka outage despite a 3-second `describeCluster()` timeout, because `Admin`'s
+default `close()` waited on an in-flight connection attempt; explicit `admin.close(Duration.
+ofSeconds(2))` in a `finally` block dropped that to ~5s.
+
+Remaining Stage 12 candidates: Testcontainers (retrofit onto `SeatInstanceConcurrencyTest`, which
+currently points at the real dev MySQL), then distributed tracing (Micrometer Tracing +
+OpenTelemetry) once there's more Actuator-instrumented infrastructure to trace across.
 
 The Stage 9 saga verified end-to-end: `POST /api/bookings` (booking-service, Feign → pricing-service
 for the real price, Feign → payment-service to initiate a PENDING payment) →

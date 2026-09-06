@@ -295,6 +295,42 @@ noted below.
   booking flipped to CONFIRMED / seat to BOOKED exactly as the original happy path does. This is
   the actual point of the pattern — under the old code, that event would have been lost permanently
   the moment Kafka became unreachable, with no error raised anywhere to reveal it.
+- **Actuator + Micrometer added to every service with a web server** (all 12 except
+  `notification-service`, which deliberately has none — Actuator's HTTP endpoints need a web stack,
+  and adding one just for this would contradict its Stage 10 design). Exposure config
+  (`management.endpoints.web.exposure.include: health,info,metrics`,
+  `management.endpoint.health.show-details: always`) and `info.app.name` live in the shared
+  `config-repo/application.yml`, same as every other setting common to all services. Micrometer
+  itself needs no separate dependency — it's bundled with `spring-boot-starter-actuator` and starts
+  collecting real data (JVM, HikariCP pool, HTTP request timings) the moment the starter is on the
+  classpath; `/actuator/metrics/{name}` surfaces it directly, no Prometheus/Grafana needed to get
+  the learning value. Deliberately skipped `micrometer-registry-prometheus` for now — that's a
+  separate, later addition if a real dashboard is ever wanted.
+- **Spring Boot 4 moved the entire Health API to a new module and package**: not
+  `org.springframework.boot.actuate.health` (the answer most tutorials and AI training data would
+  give) but `org.springframework.boot.health.contributor`, in a dedicated `spring-boot-health`
+  artifact — confirmed by inspecting jars directly, since `spring-boot-actuator-4.0.2.jar` itself
+  contains zero classes with "Health" in the name. `HealthIndicator`/`AbstractHealthIndicator`
+  otherwise work exactly as the pre-4.0 versions did (`doHealthCheck(Health.Builder)`); only the
+  import path changed. Same modularization pattern as Kafka and Security before it — check the
+  actual jar contents before assuming a class still lives where older docs say it does.
+- **Spring Boot 4.0.2 ships no built-in Kafka health contributor** — confirmed by inspecting both
+  `spring-boot-actuator-autoconfigure` and `spring-boot-kafka` jars directly, neither contains a
+  Kafka-related health class. Unlike the DataSource health indicator (which auto-registers and
+  correctly reported `db: UP`), a broken Kafka connection would leave `/actuator/health` reporting
+  UP even though the outbox relay and every consumer are actually degraded. Fixed with a small
+  custom `KafkaHealthIndicator` (`payment-service`, `booking-service` — the two Kafka producers)
+  using `KafkaAdmin.getConfigurationProperties()` to build a real `Admin` client and call
+  `describeCluster()`. Verified live: reports `UP` with the real cluster ID when Kafka is up, and
+  correctly flips to `DOWN` when the container is stopped.
+- **`Admin.close()` (no-arg) can block far longer than any timeout on the operation it's closing
+  after** — the first version of `KafkaHealthIndicator` used try-with-resources (which always calls
+  the no-arg `close()`), and stopping Kafka made the health check hang 30+ seconds despite a 3-second
+  timeout on `describeCluster()`, because closing the admin client waited on an in-flight connection
+  attempt to the unreachable broker. Fixed by closing explicitly with `admin.close(Duration.
+  ofSeconds(2))` in a `finally` block instead of try-with-resources — dropped the failure-path
+  response time to ~5s. A health check that takes 30s to report unhealthy defeats the purpose of
+  having one.
 
 ## Known gaps (in-progress build, not silently "fix")
 
