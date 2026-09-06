@@ -22,6 +22,7 @@
         <module>seat-service</module>
         <module>flight-ops-service</module>
         <module>user-service</module>
+        <module>api-gateway</module>
     </modules>
 
     <properties>

@@ -1,0 +1,46 @@
+server:
+  port: 5000
+
+logging:
+  level:
+    org.springframework.cloud.gateway: DEBUG
+    org.springframework.web.reactive: DEBUG
+
+spring:
+  application:
+    name: api-gateway
+  config:
+    import: optional:configserver:http://localhost:8888
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: user-service
+              uri: lb://user-service
+              predicates:
+                - Path=/auth/**
+            - id: location-service
+              uri: lb://location-service
+              predicates:
+                - Path=/api/cities,/api/cities/**
+            - id: airline-core-service
+              uri: lb://airline-core-service
+              predicates:
+                - Path=/api/airlines,/api/airlines/**
+            - id: pricing-service
+              uri: lb://pricing-service
+              predicates:
+                - Path=/api/fares,/api/fares/**
+            - id: ancillary-service
+              uri: lb://ancillary-service
+              predicates:
+                - Path=/api/ancillaries,/api/ancillaries/**
+            - id: seat-service
+              uri: lb://seat-service
+              predicates:
+                - Path=/api/seat-instances,/api/seat-instances/**
+            - id: flight-ops-service
+              uri: lb://flight-ops-service
+              predicates:
+                - Path=/api/flights,/api/flights/**,/api/flight-instances,/api/flight-instances/**
