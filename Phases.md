@@ -18,6 +18,7 @@ without re-reading the whole conversation history.
 | 9 | Kafka + the booking/payment saga (`booking-service`, `payment-service`) | ✅ Done |
 | 10 | `notification-service` — pure Kafka consumer | ✅ Done |
 | 11 | Harden — seat concurrency, real exception handling, idempotency, N+1 fixes, tests | ✅ Done |
+| 12 | Further hardening — transactional outbox ✅, Actuator/Micrometer, Testcontainers, distributed tracing | 🟨 In progress |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -55,74 +56,44 @@ Open (fast, ~0.08s, fallback only, no wasted attempts) after 5 failures, then re
 
 ## Immediate next steps
 
-Stage 11 (harden) is underway. Seat concurrency — the headline item — is done: `seat-service`
-now holds a real pessimistic lock (`SELECT ... FOR UPDATE`) across a `@Transactional`
-`holdSeat(id)` method, exposed as `POST /api/seat-instances/{id}/hold`, atomically flipping
-AVAILABLE → HELD or rejecting with 409. `booking-service` now actually calls this (via a
-fallback-less `SeatClient`) instead of trusting a client-supplied `seatInstanceId`, and translates
-the 409 into a clean failure instead of creating a booking for a seat nobody actually holds.
+**Stage 11 (harden) is fully done** — seat concurrency (pessimistic locking on seat hold), real
+exception handling (`ResourceNotFoundException`/`EmailAlreadyRegisteredException`/
+`InvalidCredentialsException`, plus a real pre-existing bug fix: `user-service`'s
+`.anyRequest().authenticated()` was blocking Spring Boot's own internal `/error` dispatch and
+turning every error response into a flat 403), idempotent Kafka consumers, the N+1 Feign bulk-
+lookup fix, and 38 new service-layer unit tests across all 9 REST services. Full detail on each is
+in `CLAUDE.md`'s "Hard-won lessons" section — kept short here since it's settled history now.
 
-Verified two ways: `SeatInstanceConcurrencyTest` (seat-service's first test) races 15 threads
-against the same seat row on the real MySQL database and asserts exactly 1 wins — confirmed as a
-real negative control by temporarily reverting to a plain `findById` and watching the same test
-fail reproducibly (10 of 15 "won"). And live, end-to-end, through the real HTTP stack: 5 concurrent
-`POST /api/bookings` requests against one seat produced exactly one 201 and four clean 409s.
+**Stage 12 (further hardening) is underway.** First up, the transactional outbox pattern, added to
+`payment-service` and `booking-service` — this fixes a *different* gap than the one named below:
+not "a synchronous Feign call fails mid-saga" (that's still open, see Known deliberate gaps) but
+the dual-write hazard where `confirmPayment` used to commit `status=SUCCESS` to its own DB and then
+*separately* publish `PaymentCompletedEvent` to Kafka — two unrelated systems, no shared
+transaction. A crash or Kafka outage between those two steps meant the event was gone forever with
+no error anywhere, even though the DB permanently said SUCCESS. Same shape existed in
+`booking-service`'s `PaymentEventConsumer` (save CONFIRMED, then separately publish
+`BookingConfirmedEvent`). Fixed by writing the event as an `OutboxEvent` row in the same
+`@Transactional` method as the business update, then relaying unpublished rows to Kafka via a
+`@Scheduled(fixedDelay = 3000)` `OutboxRelay` per service that only marks a row published after
+Kafka actually acknowledges it (blocking on the send future — `KafkaTemplate.send()` doesn't throw
+synchronously on broker failure, a real gotcha this surfaced). A relay crash or Kafka outage
+mid-send just leaves the row unpublished for the next poll — exactly why the idempotent consumers
+built in Stage 11 had to exist.
 
-Real exception handling is also done: every service's `.orElseThrow(() -> new RuntimeException(...))`
-for a missing entity now throws a `ResourceNotFoundException` (404) — same `@ResponseStatus`
-technique as the two seat-concurrency exceptions, no `@RestControllerAdvice` needed anywhere.
-`user-service` also got `EmailAlreadyRegisteredException` (409) and `InvalidCredentialsException`
-(401) for signup/login. Along the way this surfaced a real, pre-existing bug: `user-service`'s
-`SecurityConfig` had `.anyRequest().authenticated()` with no exception for `/error`, so Spring
-Boot's internal error-rendering dispatch was itself getting blocked as "unauthenticated," turning
-every error response — the new ones and the old bare 500s alike — into a flat 403. Nobody had
-tested a failure path directly against the service since Stage 6. Fixed by permitting `/error`
-alongside `/auth/**`. Verified live: 404 across all 8 REST services' not-found cases, 401 for a bad
-password, 409 for a duplicate signup email, 201/200 for the happy path.
+Verified live, the way this project verifies things that matter: stopped the Kafka container,
+confirmed a payment — it still returned 200 and the DB updated immediately (the transaction is
+genuinely independent of Kafka), while the downstream booking correctly stayed PENDING (event
+undelivered, not silently dropped). Restarted Kafka; the next relay poll delivered the event with
+no re-confirm ever called, and the booking flipped to CONFIRMED / seat to BOOKED exactly like the
+normal happy path. Under the old code that event would have been lost permanently the instant
+Kafka became unreachable. Also unit-tested (`OutboxRelayTest` per service): successful publish
+marks the row published, a failed publish leaves it unpublished without crashing the batch, and
+one failure doesn't block the rest of the batch from relaying.
 
-Idempotency is also done: Kafka is at-least-once, not exactly-once, so `PaymentEventConsumer`
-(booking-service) and `BookingConfirmedEventConsumer` (seat-service) both now check the entity's
-current status before acting and skip a no-op re-processing instead of unconditionally re-saving
-and republishing — the classic idempotent-consumer pattern. `payment-service`'s `confirmPayment`
-got the same guard for a duplicate REST call. This works because every event here maps to one
-deterministic terminal state; it's explicitly not a generic solution for events with a cumulative
-effect. `notification-service` is a known, accepted exception — no database, so a redelivered
-event still produces one duplicate log line, fine for a simulated notification.
-
-Verified via a plain Mockito unit test per consumer (`PaymentEventConsumerTest`,
-`BookingConfirmedEventConsumerTest`) — a live test forcing real Kafka redelivery turned out to be
-unreliable to read (Hibernate silently skips a no-op UPDATE regardless of any guard, muddying the
-signal), so the tests call the `@KafkaListener` method directly, twice, and assert the repository
-save and the event publish each happened exactly once. Confirmed as a real negative control:
-removing the guard made both tests fail reproducibly before restoring it.
-
-The N+1 Feign calls are also fixed: `location-service`'s and `airline-core-service`'s "get all"
-endpoints now also accept an optional `ids` query param on the same path (`GET /api/cities?ids=1,2,3`,
-`GET /api/airlines?ids=1,2`), backed by a `findAllByIdIn` repository method. `airline-core-service.
-getAllAirlines` and `flight-ops-service.getAllFlights`/`getAllFlightInstances` now collect the
-distinct IDs they need across the whole list and make exactly one bulk Feign call per dependency,
-instead of one call per row (up to 3 per row for flights). `getAllFlightInstances` needed one extra
-step — dedupe the underlying `Flight` entities by ID before batch-enriching, since many instances
-commonly share one flight. Every existing Feign fallback got a bulk variant too, reusing the
-single-lookup fallback (`ids.stream().map(this::getXById).toList()`) rather than duplicating the
-placeholder logic. Verified directly via Hibernate's SQL log: `GET /api/flights` against 3 flights
-(2 distinct airlines, 3 distinct cities) produced exactly one `where id in (?,?)` and one
-`where id in (?,?,?)` query, not the 6+ separate `where id=?` calls it used to make.
-
-Broader test coverage closes out Stage 11: all 9 REST services now have service-layer unit tests
-(38 new tests) — create/getById (happy + `ResourceNotFoundException`)/getAll for the plain CRUD
-services, plus targeted coverage for what's actually novel per service: `AirlineServiceTest` and
-`FlightServiceTest` assert the N+1 bulk-lookup batching happens exactly once regardless of row
-count (previously only checked manually via SQL logs), `BookingServiceTest` exercises the
-`NoFallbackAvailableException`-unwrapping gotcha directly (raw conflict, wrapped conflict, and an
-unrelated cause that must rethrow), and `PaymentServiceTest` gets a dedicated test for the
-idempotency guard. Every collaborator (repository, Feign client, `PasswordEncoder`/`JwtUtil`) is
-mocked, so none of these need a database, Spring context, or Kafka — milliseconds per test.
-`AuthServiceTest` mocks `JwtUtil` specifically to avoid `JwtConstant`'s env-var read at class-load
-time, so the test runs regardless of whether `JWT_SECRET` is sourced in the current shell.
-
-**Stage 11 is now fully done.** Remaining known gaps (see below) are scoped future work, not
-things left unfinished by accident.
+Remaining Stage 12 candidates, roughly in planned order: Actuator + Micrometer (health/metrics
+endpoints), Testcontainers (retrofit onto `SeatInstanceConcurrencyTest`, which currently points at
+the real dev MySQL), then distributed tracing (Micrometer Tracing + OpenTelemetry) once there's
+more Actuator-instrumented infrastructure to trace across.
 
 The Stage 9 saga verified end-to-end: `POST /api/bookings` (booking-service, Feign → pricing-service
 for the real price, Feign → payment-service to initiate a PENDING payment) →

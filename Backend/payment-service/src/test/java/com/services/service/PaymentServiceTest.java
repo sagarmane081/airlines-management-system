@@ -1,10 +1,11 @@
 package com.services.service;
 
 import com.common.dto.PaymentDto;
+import com.services.entity.OutboxEvent;
 import com.services.entity.Payment;
 import com.services.entity.PaymentStatus;
-import com.services.event.PaymentEventProducer;
 import com.services.exception.ResourceNotFoundException;
+import com.services.repository.OutboxEventRepository;
 import com.services.repository.PaymentRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,7 +27,7 @@ class PaymentServiceTest {
     private PaymentRepository paymentRepository;
 
     @Mock
-    private PaymentEventProducer paymentEventProducer;
+    private OutboxEventRepository outboxEventRepository;
 
     @InjectMocks
     private PaymentService paymentService;
@@ -54,7 +55,7 @@ class PaymentServiceTest {
     }
 
     @Test
-    void confirmPaymentFlipsToSuccessAndPublishesOnce() {
+    void confirmPaymentFlipsToSuccessAndWritesOutboxRowOnce() {
         Payment payment = new Payment(1L, 10L, BigDecimal.valueOf(250), PaymentStatus.PENDING);
         when(paymentRepository.findById(1L)).thenReturn(Optional.of(payment));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -62,7 +63,8 @@ class PaymentServiceTest {
         PaymentDto result = paymentService.confirmPayment(1L);
 
         assertEquals("SUCCESS", result.getStatus());
-        verify(paymentEventProducer, times(1)).publish(any());
+        verify(outboxEventRepository, times(1)).save(argThat((OutboxEvent e) ->
+                e.getPaymentId().equals(1L) && e.getBookingId().equals(10L) && !e.isPublished()));
     }
 
     @Test
@@ -74,6 +76,6 @@ class PaymentServiceTest {
 
         assertEquals("SUCCESS", result.getStatus());
         verify(paymentRepository, never()).save(any());
-        verifyNoInteractions(paymentEventProducer);
+        verifyNoInteractions(outboxEventRepository);
     }
 }

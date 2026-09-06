@@ -261,6 +261,40 @@ noted below.
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.
   Prefix the command with `MSYS_NO_PATHCONV=1` whenever a docker command's arguments contain a
   Unix-style path meant to stay literal.
+- **Transactional outbox added to `payment-service` and `booking-service`**, fixing a real
+  dual-write hazard that's different from the saga-compensation gap `Phases.md` names (that one —
+  a synchronous Feign call failing mid-workflow — is a separate, harder problem the outbox pattern
+  doesn't touch). The hazard: `confirmPayment` used to (1) commit `status=SUCCESS` to its own DB,
+  then (2) separately publish `PaymentCompletedEvent` to Kafka — two unrelated systems, no shared
+  transaction. A crash or Kafka outage between those two steps meant the DB said SUCCESS forever
+  but the event was gone forever too, with no error anywhere. Same shape existed in
+  `booking-service`'s `PaymentEventConsumer` (save `CONFIRMED`, then separately publish
+  `BookingConfirmedEvent`). Fixed by writing the event as an `OutboxEvent` row in the *same*
+  `@Transactional` method as the business update — one database, real ACID guarantee, so both
+  commit or both roll back. A separate `@Scheduled(fixedDelay = 3000)` `OutboxRelay` per service
+  polls for unpublished rows and relays them to Kafka, blocking on the send future
+  (`.get(5, TimeUnit.SECONDS)`, since `KafkaTemplate.send()` doesn't throw synchronously on broker
+  failure — only marking a row published after Kafka actually acknowledges it. A relay crash or
+  Kafka outage mid-send just leaves the row unpublished for the next poll to retry — the exact
+  reason the idempotent consumers built earlier had to exist. Each service's `OutboxEvent` is typed
+  to the one event shape it emits (not a generic JSON-payload-plus-type-discriminator envelope) —
+  proportionate, since neither service emits more than one kind of event.
+- **`KafkaTemplate.send()` returns a `CompletableFuture` that only fails asynchronously** — a
+  `try/catch` around the call itself does not see broker-level failures (only immediate
+  serialization errors would throw synchronously). `PaymentEventProducer`/`BookingEventProducer`
+  had to start returning the future so `OutboxRelay` could block on it (`.get(timeout)`) and know
+  for certain whether the send actually succeeded before marking the outbox row published.
+  Fire-and-forget publishing (the old code) always "succeeds" immediately regardless of whether
+  Kafka is even reachable — fine for a producer with no durability requirement, actively wrong for
+  a relay whose entire job is to know when delivery truly happened.
+- **Verified live, not just unit-tested**: stopped the Kafka container, confirmed a payment — it
+  still returned 200 SUCCESS and the DB updated immediately, proving the business transaction is
+  genuinely independent of Kafka's availability. The downstream booking stayed PENDING (event
+  correctly undelivered, not silently dropped) for as long as Kafka was down. Restarted Kafka; the
+  next `OutboxRelay` poll (within 3s) delivered the event with no re-confirm call ever made, and the
+  booking flipped to CONFIRMED / seat to BOOKED exactly as the original happy path does. This is
+  the actual point of the pattern — under the old code, that event would have been lost permanently
+  the moment Kafka became unreachable, with no error raised anywhere to reveal it.
 
 ## Known gaps (in-progress build, not silently "fix")
 
@@ -269,7 +303,8 @@ noted below.
 - `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
   fallback (deliberately — see the money-critical-calls entry above), and no compensation/rollback
   exists if payment initiation fails after the booking row is already saved PENDING — that booking
-  is just stuck, never cancelled automatically. Saga compensation is real future work.
+  is just stuck, never cancelled automatically. This is a saga-compensation gap, not a dual-write
+  hazard — the transactional outbox doesn't address it. Saga compensation is real future work.
 - Test coverage is at the service layer only — controllers and Spring Data repository interfaces
   are untested (thin pass-through and framework-generated respectively, low value to cover
   directly). No test hits a real database except `SeatInstanceConcurrencyTest`, which genuinely

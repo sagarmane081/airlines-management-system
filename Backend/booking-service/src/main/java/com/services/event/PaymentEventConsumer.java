@@ -1,25 +1,34 @@
 package com.services.event;
 
-import com.common.event.BookingConfirmedEvent;
 import com.common.event.PaymentCompletedEvent;
 import com.services.entity.Booking;
 import com.services.entity.BookingStatus;
+import com.services.entity.OutboxEvent;
 import com.services.exception.ResourceNotFoundException;
 import com.services.repository.BookingRepository;
+import com.services.repository.OutboxEventRepository;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
 
 @Component
 public class PaymentEventConsumer {
 
     private final BookingRepository bookingRepository;
-    private final BookingEventProducer bookingEventProducer;
+    private final OutboxEventRepository outboxEventRepository;
 
-    public PaymentEventConsumer(BookingRepository bookingRepository, BookingEventProducer bookingEventProducer) {
+    public PaymentEventConsumer(BookingRepository bookingRepository, OutboxEventRepository outboxEventRepository) {
         this.bookingRepository = bookingRepository;
-        this.bookingEventProducer = bookingEventProducer;
+        this.outboxEventRepository = outboxEventRepository;
     }
 
+    /**
+     * Writes the BookingConfirmedEvent to the outbox in the same transaction as the status
+     * update, instead of publishing to Kafka directly - see OutboxRelay for why.
+     */
+    @Transactional
     @KafkaListener(topics = "payment.completed", groupId = "booking-service-group")
     public void onPaymentCompleted(PaymentCompletedEvent event) {
         Booking booking = bookingRepository.findById(event.getBookingId())
@@ -27,14 +36,14 @@ public class PaymentEventConsumer {
 
         if (booking.getStatus() == BookingStatus.CONFIRMED) {
             // Kafka is at-least-once, not exactly-once - a redelivered PaymentCompletedEvent
-            // must not republish BookingConfirmedEvent a second time.
+            // must not create a second outbox row.
             return;
         }
 
         booking.setStatus(BookingStatus.CONFIRMED);
         Booking saved = bookingRepository.save(booking);
 
-        bookingEventProducer.publish(
-                new BookingConfirmedEvent(saved.getId(), saved.getFlightInstanceId(), saved.getSeatInstanceId()));
+        outboxEventRepository.save(new OutboxEvent(
+                null, saved.getId(), saved.getFlightInstanceId(), saved.getSeatInstanceId(), false, LocalDateTime.now()));
     }
 }
