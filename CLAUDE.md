@@ -335,6 +335,45 @@ noted below.
   pattern. Restarting `booking-service` after the fix picked up and relayed the still-unpublished
   row automatically on the very next poll, with no manual DB fix needed - a clean live demonstration
   of the same retry guarantee the outbox pattern was already documented as providing.
+- **`Airport` (location-service) and `Aircraft` (airline-core-service) are real `@ManyToOne`
+  relationships, not cross-service Longs** — unlike `Airline.headquartersCityId` (a plain Long,
+  since `Airline` and `City` live in different services/databases), `Airport.city` and
+  `Aircraft.airline` reference an entity in the *same* service's own database, so a genuine JPA
+  relationship is correct per the established convention. This also meant `AircraftService` could
+  enrich its `AirlineDto` by calling `AirlineService.getAirlineById` directly (a plain Java method
+  call, same service) rather than needing a Feign client - simpler than every other cross-service
+  enrichment in the codebase.
+- **`Flight.departureCityId`/`arrivalCityId` became `departureAirportId`/`arrivalAirportId` - a
+  straight replacement, not an addition.** A flight departs from a specific airport, not an entire
+  city; since the field was already a plain cross-service Long (not a JPA relationship), the swap
+  was mechanical - rename the field, swap `LocationClient.getCityById`/`getCitiesByIds` for
+  `getAirportById`/`getAirportsByIds`, update `FlightMapper`/`FlightDto`. `FlightInstance` separately
+  gained an optional `aircraftId` (which tail number is operating this specific instance), enriched
+  via a new `AircraftClient` Feign call using the same bulk-lookup-by-distinct-ids pattern as every
+  other N+1 fix in this codebase - `getAllFlightInstances` collects every non-null `aircraftId`,
+  makes exactly one bulk call, and leaves `aircraft: null` for instances that don't have one
+  assigned (which includes flight instances created before this migration - `ddl-auto=update` adds
+  the new columns but never backfills them, so old rows correctly show `null` there and for the old
+  city-based airport fields too, not a bug).
+- **Two `@FeignClient` interfaces cannot share the same `name` without a `contextId` - fails at
+  Spring context startup, not compile time.** Adding `AircraftClient` (`name = "airline-core-
+  service"`) alongside the pre-existing `AirlineClient` (same `name`) in `flight-ops-service` made
+  the service fail to boot with `The bean 'airline-core-service.FeignClientSpecification' could not
+  be registered - a bean with that name has already been defined`. Spring Cloud OpenFeign registers
+  one internal `FeignClientSpecification` bean per Feign client, keyed by `name` by default; two
+  clients pointed at the same downstream service collide on that key even though they're otherwise
+  unrelated interfaces. Fixed by adding `contextId = "aircraftClient"` to the second client -
+  disambiguates the internal bean while `name` still resolves the same Eureka-registered service for
+  both. Only surfaced via a real `mvn spring-boot:run`, not `mvn test-compile` or the (passing)
+  Mockito unit tests - neither compiles nor mocked tests ever construct the actual Spring
+  `ApplicationContext` that this bean-registration conflict lives in.
+- **A local `application.yml` change (gateway routes) needs the gateway restarted to take effect -
+  it doesn't come from `config-server`, so there's no live-refresh path.** Added
+  `/api/airports/**`/`/api/aircrafts/**` to `api-gateway`'s route predicates but forgot to restart
+  the gateway process itself; every request through it 404'd even though the downstream services
+  and their new endpoints were already up and correct. Same class of gotcha as the "every already-
+  running service must restart to see a shared `config-repo/application.yml` change" note below,
+  just for the gateway's *own* local file instead of the shared remote one.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.

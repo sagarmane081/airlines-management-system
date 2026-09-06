@@ -1,6 +1,6 @@
 package com.services.client;
 
-import com.common.dto.CityDto;
+import com.common.dto.AirportDto;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -9,15 +9,15 @@ import java.util.List;
 public class LocationClientFallback implements LocationClient {
 
     @Override
-    public CityDto getCityById(Long id) {
-        CityDto fallback = new CityDto();
+    public AirportDto getAirportById(Long id) {
+        AirportDto fallback = new AirportDto();
         fallback.setId(id);
         fallback.setName("Unknown");
         return fallback;
     }
 
     @Override
-    public List<CityDto> getCitiesByIds(List<Long> ids) {
-        return ids.stream().map(this::getCityById).toList();
+    public List<AirportDto> getAirportsByIds(List<Long> ids) {
+        return ids.stream().map(this::getAirportById).toList();
     }
 }

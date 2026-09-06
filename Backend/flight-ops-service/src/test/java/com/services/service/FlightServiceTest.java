@@ -1,7 +1,9 @@
 package com.services.service;
 
+import com.common.dto.AircraftDto;
 import com.common.dto.AirlineDto;
-import com.common.dto.CityDto;
+import com.common.dto.AirportDto;
+import com.services.client.AircraftClient;
 import com.services.client.AirlineClient;
 import com.services.client.LocationClient;
 import com.services.dto.FlightDto;
@@ -43,6 +45,9 @@ class FlightServiceTest {
     @Mock
     private LocationClient locationClient;
 
+    @Mock
+    private AircraftClient aircraftClient;
+
     @InjectMocks
     private FlightService flightService;
 
@@ -63,29 +68,29 @@ class FlightServiceTest {
         when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(
                 new AirlineDto(10L, "Air India", "AI", null),
                 new AirlineDto(20L, "IndiGo", "6E", null)));
-        when(locationClient.getCitiesByIds(anyList())).thenReturn(List.of(
-                new CityDto(100L, "Mumbai", "India", "Asia/Kolkata"),
-                new CityDto(200L, "Delhi", "India", "Asia/Kolkata"),
-                new CityDto(300L, "Bangalore", "India", "Asia/Kolkata")));
+        when(locationClient.getAirportsByIds(anyList())).thenReturn(List.of(
+                new AirportDto(100L, "BOM", "Mumbai Airport", null),
+                new AirportDto(200L, "DEL", "Delhi Airport", null),
+                new AirportDto(300L, "BLR", "Bangalore Airport", null)));
 
         List<FlightDto> result = flightService.getAllFlights();
 
         assertEquals(2, result.size());
         assertEquals("Air India", result.get(0).getAirline().getName());
-        assertEquals("Bangalore", result.get(1).getArrivalCity().getName());
+        assertEquals("Bangalore Airport", result.get(1).getArrivalAirport().getName());
         verify(airlineClient, times(1)).getAirlinesByIds(anyList());
-        verify(locationClient, times(1)).getCitiesByIds(anyList());
+        verify(locationClient, times(1)).getAirportsByIds(anyList());
     }
 
     @Test
     void getAllFlightInstancesDedupesSharedFlightBeforeEnriching() {
         Flight flight = new Flight(1L, 10L, "AI101", 100L, 100L);
-        FlightInstance instance1 = new FlightInstance(1L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED);
-        FlightInstance instance2 = new FlightInstance(2L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED);
+        FlightInstance instance1 = new FlightInstance(1L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, null);
+        FlightInstance instance2 = new FlightInstance(2L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, null);
         when(flightInstanceRepository.findAll()).thenReturn(List.of(instance1, instance2));
 
         when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(new AirlineDto(10L, "Air India", "AI", null)));
-        when(locationClient.getCitiesByIds(anyList())).thenReturn(List.of(new CityDto(100L, "Mumbai", "India", "Asia/Kolkata")));
+        when(locationClient.getAirportsByIds(anyList())).thenReturn(List.of(new AirportDto(100L, "BOM", "Mumbai Airport", null)));
 
         List<FlightInstanceDto> result = flightService.getAllFlightInstances();
 
@@ -94,7 +99,26 @@ class FlightServiceTest {
         assertEquals("Air India", result.get(1).getFlight().getAirline().getName());
         // Both instances share one flight - enrichment must happen once, not once per instance.
         verify(airlineClient, times(1)).getAirlinesByIds(anyList());
-        verify(locationClient, times(1)).getCitiesByIds(anyList());
+        verify(locationClient, times(1)).getAirportsByIds(anyList());
+        verifyNoInteractions(aircraftClient);
+    }
+
+    @Test
+    void getAllFlightInstancesEnrichesAircraftInOneBulkCall() {
+        Flight flight = new Flight(1L, 10L, "AI101", 100L, 100L);
+        FlightInstance instance1 = new FlightInstance(1L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, 500L);
+        FlightInstance instance2 = new FlightInstance(2L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, 500L);
+        when(flightInstanceRepository.findAll()).thenReturn(List.of(instance1, instance2));
+
+        when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(new AirlineDto(10L, "Air India", "AI", null)));
+        when(locationClient.getAirportsByIds(anyList())).thenReturn(List.of(new AirportDto(100L, "BOM", "Mumbai Airport", null)));
+        when(aircraftClient.getAircraftByIds(anyList())).thenReturn(List.of(new AircraftDto(500L, "VT-ABC", "737-800", "Boeing", 189, "ACTIVE", null)));
+
+        List<FlightInstanceDto> result = flightService.getAllFlightInstances();
+
+        assertEquals("VT-ABC", result.get(0).getAircraft().getRegistrationNumber());
+        assertEquals("VT-ABC", result.get(1).getAircraft().getRegistrationNumber());
+        verify(aircraftClient, times(1)).getAircraftByIds(anyList());
     }
 
     @Test
@@ -102,10 +126,10 @@ class FlightServiceTest {
         Flight saved = new Flight(1L, 10L, "AI101", 100L, 100L);
         when(flightRepository.save(any(Flight.class))).thenReturn(saved);
         when(airlineClient.getAirlineById(10L)).thenReturn(new AirlineDto(10L, "Air India", "AI", null));
-        when(locationClient.getCityById(100L)).thenReturn(new CityDto(100L, "Mumbai", "India", "Asia/Kolkata"));
+        when(locationClient.getAirportById(100L)).thenReturn(new AirportDto(100L, "BOM", "Mumbai Airport", null));
 
         FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null),
-                new CityDto(100L, null, null, null), new CityDto(100L, null, null, null));
+                new AirportDto(100L, null, null, null), new AirportDto(100L, null, null, null));
 
         FlightDto result = flightService.createFlight(request, "ROLE_AIRLINE_OWNER");
 
@@ -115,7 +139,7 @@ class FlightServiceTest {
     @Test
     void createFlightThrowsForbiddenForCustomer() {
         FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null),
-                new CityDto(100L, null, null, null), new CityDto(100L, null, null, null));
+                new AirportDto(100L, null, null, null), new AirportDto(100L, null, null, null));
 
         assertThrows(ForbiddenException.class, () -> flightService.createFlight(request, "ROLE_CUSTOMER"));
         verify(flightRepository, never()).save(any());
@@ -131,5 +155,32 @@ class FlightServiceTest {
 
         assertThrows(ForbiddenException.class, () -> flightService.createFlightInstance(request, "ROLE_CUSTOMER"));
         verifyNoInteractions(flightRepository, flightInstanceRepository);
+    }
+
+    @Test
+    void createFlightInstanceStampsAircraftIdWhenProvided() {
+        Flight flight = new Flight(1L, 10L, "AI101", 100L, 100L);
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
+        when(flightInstanceRepository.save(any(FlightInstance.class))).thenAnswer(inv -> {
+            FlightInstance instance = inv.getArgument(0);
+            instance.setId(1L);
+            return instance;
+        });
+        when(airlineClient.getAirlineById(10L)).thenReturn(new AirlineDto(10L, "Air India", "AI", null));
+        when(locationClient.getAirportById(100L)).thenReturn(new AirportDto(100L, "BOM", "Mumbai Airport", null));
+        when(aircraftClient.getAircraftById(500L)).thenReturn(new AircraftDto(500L, "VT-ABC", "737-800", "Boeing", 189, "ACTIVE", null));
+
+        FlightDto flightRef = new FlightDto();
+        flightRef.setId(1L);
+        FlightInstanceDto request = new FlightInstanceDto();
+        request.setFlight(flightRef);
+        request.setStatus(FlightInstanceStatus.SCHEDULED);
+        AircraftDto aircraftRef = new AircraftDto();
+        aircraftRef.setId(500L);
+        request.setAircraft(aircraftRef);
+
+        FlightInstanceDto result = flightService.createFlightInstance(request, "ROLE_SYSTEM_ADMIN");
+
+        assertEquals("VT-ABC", result.getAircraft().getRegistrationNumber());
     }
 }

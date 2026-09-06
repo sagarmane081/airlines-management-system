@@ -1,7 +1,9 @@
 package com.services.service;
 
+import com.common.dto.AircraftDto;
 import com.common.dto.AirlineDto;
-import com.common.dto.CityDto;
+import com.common.dto.AirportDto;
+import com.services.client.AircraftClient;
 import com.services.client.AirlineClient;
 import com.services.client.LocationClient;
 import com.services.dto.FlightDto;
@@ -15,8 +17,10 @@ import com.services.repository.FlightInstanceRepository;
 import com.services.repository.FlightRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -31,22 +35,25 @@ public class FlightService {
     private final FlightInstanceRepository flightInstanceRepository;
     private final AirlineClient airlineClient;
     private final LocationClient locationClient;
+    private final AircraftClient aircraftClient;
 
     public FlightService(FlightRepository flightRepository,
                          FlightInstanceRepository flightInstanceRepository,
                          AirlineClient airlineClient,
-                         LocationClient locationClient) {
+                         LocationClient locationClient,
+                         AircraftClient aircraftClient) {
         this.flightRepository = flightRepository;
         this.flightInstanceRepository = flightInstanceRepository;
         this.airlineClient = airlineClient;
         this.locationClient = locationClient;
+        this.aircraftClient = aircraftClient;
     }
 
     private FlightDto enrichFlight(Flight flight) {
         AirlineDto airline = airlineClient.getAirlineById(flight.getAirlineId());
-        CityDto departureCity = locationClient.getCityById(flight.getDepartureCityId());
-        CityDto arrivalCity = locationClient.getCityById(flight.getArrivalCityId());
-        return FlightMapper.toDto(flight, airline, departureCity, arrivalCity);
+        AirportDto departureAirport = locationClient.getAirportById(flight.getDepartureAirportId());
+        AirportDto arrivalAirport = locationClient.getAirportById(flight.getArrivalAirportId());
+        return FlightMapper.toDto(flight, airline, departureAirport, arrivalAirport);
     }
 
     /**
@@ -60,23 +67,27 @@ public class FlightService {
         }
 
         List<Long> airlineIds = flights.stream().map(Flight::getAirlineId).distinct().toList();
-        List<Long> cityIds = Stream.concat(
-                        flights.stream().map(Flight::getDepartureCityId),
-                        flights.stream().map(Flight::getArrivalCityId))
+        List<Long> airportIds = Stream.concat(
+                        flights.stream().map(Flight::getDepartureAirportId),
+                        flights.stream().map(Flight::getArrivalAirportId))
                 .distinct()
                 .toList();
 
         Map<Long, AirlineDto> airlinesById = airlineClient.getAirlinesByIds(airlineIds).stream()
                 .collect(Collectors.toMap(AirlineDto::getId, Function.identity()));
-        Map<Long, CityDto> citiesById = locationClient.getCitiesByIds(cityIds).stream()
-                .collect(Collectors.toMap(CityDto::getId, Function.identity()));
+        Map<Long, AirportDto> airportsById = locationClient.getAirportsByIds(airportIds).stream()
+                .collect(Collectors.toMap(AirportDto::getId, Function.identity()));
 
         return flights.stream()
                 .map(f -> FlightMapper.toDto(f,
                         airlinesById.get(f.getAirlineId()),
-                        citiesById.get(f.getDepartureCityId()),
-                        citiesById.get(f.getArrivalCityId())))
+                        airportsById.get(f.getDepartureAirportId()),
+                        airportsById.get(f.getArrivalAirportId())))
                 .toList();
+    }
+
+    private AircraftDto enrichAircraft(Long aircraftId) {
+        return aircraftId != null ? aircraftClient.getAircraftById(aircraftId) : null;
     }
 
     private void requireAirlineManager(String requesterRole) {
@@ -112,15 +123,16 @@ public class FlightService {
         instance.setDepartureTime(instanceDto.getDepartureTime());
         instance.setArrivalTime(instanceDto.getArrivalTime());
         instance.setStatus(instanceDto.getStatus());
+        instance.setAircraftId(instanceDto.getAircraft() != null ? instanceDto.getAircraft().getId() : null);
 
         FlightInstance saved = flightInstanceRepository.save(instance);
-        return FlightMapper.toDto(saved, enrichFlight(saved.getFlight()));
+        return FlightMapper.toDto(saved, enrichFlight(saved.getFlight()), enrichAircraft(saved.getAircraftId()));
     }
 
     public FlightInstanceDto getFlightInstanceById(Long id) {
         FlightInstance instance = flightInstanceRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("FlightInstance not found with id: " + id));
-        return FlightMapper.toDto(instance, enrichFlight(instance.getFlight()));
+        return FlightMapper.toDto(instance, enrichFlight(instance.getFlight()), enrichAircraft(instance.getAircraftId()));
     }
 
     public List<FlightInstanceDto> getAllFlightInstances() {
@@ -134,8 +146,19 @@ public class FlightService {
         Map<Long, FlightDto> flightDtoById = enrichFlights(distinctFlights).stream()
                 .collect(Collectors.toMap(FlightDto::getId, Function.identity()));
 
+        List<Long> aircraftIds = instances.stream()
+                .map(FlightInstance::getAircraftId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, AircraftDto> aircraftById = aircraftIds.isEmpty()
+                ? new HashMap<>()
+                : aircraftClient.getAircraftByIds(aircraftIds).stream()
+                        .collect(Collectors.toMap(AircraftDto::getId, Function.identity()));
+
         return instances.stream()
-                .map(instance -> FlightMapper.toDto(instance, flightDtoById.get(instance.getFlight().getId())))
+                .map(instance -> FlightMapper.toDto(instance, flightDtoById.get(instance.getFlight().getId()),
+                        aircraftById.get(instance.getAircraftId())))
                 .toList();
     }
 }

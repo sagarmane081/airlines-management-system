@@ -24,7 +24,7 @@ public class Flight {
 
     private String flightNumber;
 
-    private Long departureCityId;
+    private Long departureAirportId;
 
-    private Long arrivalCityId;
+    private Long arrivalAirportId;
 }

@@ -21,6 +21,7 @@ without re-reading the whole conversation history.
 | 12 | Further hardening — transactional outbox, Actuator/Micrometer, Testcontainers, distributed tracing | ✅ Done |
 | 13 | Role-based authorization — IDOR fix on bookings, catalog-management role gates | ✅ Done |
 | 14 | Multi-passenger bookings — Passenger/Ticket entities, seat-release compensation | ✅ Done |
+| 15 | Aircraft and Airport entities — Flight now routes by airport, FlightInstance gets an aircraft | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -294,6 +295,44 @@ up afterward. Full reactor `mvn test` confirmed `BUILD SUCCESS` with new coverag
 `releaseSeat` (happy path, idempotent-on-`AVAILABLE`, throws-on-`BOOKED`), the multi-seat hold/
 rollback paths in `BookingServiceTest`, and multi-seat marking in seat-service's
 `BookingConfirmedEventConsumerTest`.
+
+## Stage 15 — Aircraft and Airport entities
+
+Closed the second-biggest structural gap from the course-code comparison: flights routed by whole
+City, and there was no fleet concept at all behind an airline.
+
+- **`Airport`** (`location-service`) — `iataCode`, `name`, real `@ManyToOne` to `City` (same
+  service, same database, unlike `Airline.headquartersCityId` which is a plain cross-service Long).
+  Admin-only to create, same rule as `City`. `AirportDto` lives in `common-lib` (nesting `CityDto`,
+  mirroring `AirlineDto`) since `flight-ops-service` needs it over Feign.
+- **`Aircraft`** (`airline-core-service`) — `registrationNumber`, `model`, `manufacturer`,
+  `totalSeats`, `status` (new `AircraftStatus` enum), real `@ManyToOne` to `Airline`. Owner-or-admin
+  to create, same rule as `Flight`/`Fare`/`Ancillary` — an airline manages its own fleet.
+- **`Flight.departureCityId`/`arrivalCityId` became `departureAirportId`/`arrivalAirportId`** — a
+  straight replacement (a flight departs from a specific airport, not an entire city), mechanical
+  since the field was already a plain cross-service Long, not a JPA relationship.
+- **`FlightInstance` gained an optional `aircraftId`** (which tail number operates this instance),
+  enriched via a new `AircraftClient` using the same bulk-lookup-by-distinct-ids pattern as every
+  other N+1 fix already in this codebase.
+
+Two real bugs found only by actually starting the services, neither visible in `mvn test-compile`
+or the (passing) mocked unit tests:
+1. Adding a second `@FeignClient` pointed at `airline-core-service` (`AircraftClient`, alongside
+   the pre-existing `AirlineClient`) made `flight-ops-service` fail to boot — Spring Cloud OpenFeign
+   registers one internal bean per Feign client keyed by `name`, and two clients sharing a `name`
+   collide. Fixed with `contextId = "aircraftClient"` on the second client.
+2. The new `/api/airports`/`/api/aircrafts` gateway routes 404'd even after both downstream services
+   were confirmed up — because the gateway's own `application.yml` had been edited but the gateway
+   process itself was never restarted to pick it up (unlike `config-repo` changes, a local
+   `application.yml` edit has no live-refresh path at all).
+
+Verified live end-to-end through the gateway: created an airport (admin-gated) and an aircraft
+(owner-gated), then a real `Flight` referencing the new airport and a `FlightInstance` referencing
+the new aircraft — both came back correctly enriched, and bulk `GET /api/flight-instances` batched
+the aircraft lookup into one call while correctly leaving `aircraft: null` for pre-migration
+instances that never had one assigned. All test data cleaned up afterward. Full reactor `mvn test`
+confirmed `BUILD SUCCESS` with new coverage for `AirportServiceTest`, `AircraftServiceTest`, and
+updated `FlightServiceTest` cases for airport-based enrichment and aircraft assignment.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 

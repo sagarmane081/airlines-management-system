@@ -1,5 +1,6 @@
 package com.services.dto;
 
+import com.common.dto.AircraftDto;
 import com.services.entity.FlightInstanceStatus;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -16,4 +17,5 @@ public class FlightInstanceDto {
     private LocalDateTime departureTime;
     private LocalDateTime arrivalTime;
     private FlightInstanceStatus status;
+    private AircraftDto aircraft;
 }

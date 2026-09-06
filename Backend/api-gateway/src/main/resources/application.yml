@@ -23,11 +23,11 @@ spring:
             - id: location-service
               uri: lb://location-service
               predicates:
-                - Path=/api/cities,/api/cities/**
+                - Path=/api/cities,/api/cities/**,/api/airports,/api/airports/**
             - id: airline-core-service
               uri: lb://airline-core-service
               predicates:
-                - Path=/api/airlines,/api/airlines/**
+                - Path=/api/airlines,/api/airlines/**,/api/aircrafts,/api/aircrafts/**
             - id: pricing-service
               uri: lb://pricing-service
               predicates:

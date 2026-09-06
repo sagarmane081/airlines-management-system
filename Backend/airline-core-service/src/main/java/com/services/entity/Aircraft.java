@@ -13,29 +13,29 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 @Entity
-@Table(name = "flight_instances")
+@Table(name = "aircrafts")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class FlightInstance {
+public class Aircraft {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne
-    @JoinColumn(name = "flight_id")
-    private Flight flight;
+    private String registrationNumber;
 
-    private LocalDateTime departureTime;
+    private String model;
 
-    private LocalDateTime arrivalTime;
+    private String manufacturer;
+
+    private Integer totalSeats;
 
     @Enumerated(EnumType.STRING)
-    private FlightInstanceStatus status;
+    private AircraftStatus status;
 
-    private Long aircraftId;
+    @ManyToOne
+    @JoinColumn(name = "airline_id")
+    private Airline airline;
 }

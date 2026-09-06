@@ -1,8 +1,6 @@
 package com.services.entity;
 
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -13,29 +11,22 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 @Entity
-@Table(name = "flight_instances")
+@Table(name = "airports")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class FlightInstance {
+public class Airport {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    private String iataCode;
+
+    private String name;
+
     @ManyToOne
-    @JoinColumn(name = "flight_id")
-    private Flight flight;
-
-    private LocalDateTime departureTime;
-
-    private LocalDateTime arrivalTime;
-
-    @Enumerated(EnumType.STRING)
-    private FlightInstanceStatus status;
-
-    private Long aircraftId;
+    @JoinColumn(name = "city_id")
+    private City city;
 }
