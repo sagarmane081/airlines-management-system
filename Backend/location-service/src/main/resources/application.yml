@@ -1,0 +1,5 @@
+spring:
+  application:
+    name: location-service
+  config:
+    import: optional:configserver:http://localhost:8888
