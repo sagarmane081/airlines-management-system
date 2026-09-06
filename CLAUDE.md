@@ -417,6 +417,26 @@ noted below.
   5, and nobody had called either through the gateway since. Both APIs were completely unreachable
   through the only intended public entry point until this was caught. Added the missing routes to
   `api-gateway`'s local `application.yml`, matching the existing pattern exactly.
+- **JaCoCo added to the root parent POM's `<build><plugins>` (not `<pluginManagement>`)** — the one
+  place in this project where that distinction actually matters. `maven-compiler-plugin` and
+  `spring-boot-maven-plugin` live in `<pluginManagement>` because each child module opts in
+  individually (deliberately — e.g. `common-lib` never adds `spring-boot-maven-plugin`, since it's a
+  plain library, not a runnable app). JaCoCo needs the opposite: every module should get instrumented
+  coverage uniformly, whether or not it has tests yet, without 15 child poms each needing to
+  redeclare it. A plugin declared directly under the parent's `<build><plugins>` is inherited by
+  every child automatically; one under `<pluginManagement>` is not, until a child lists it too. Two
+  executions: `prepare-agent` (wires the coverage agent into Surefire) and `report`, bound to the
+  `test` phase (generates `target/site/jacoco/index.html` right after tests run, no separate `mvn
+  jacoco:report` step needed). Verified per-module, not just "plugin resolved": `mvn test` at the
+  reactor root produced a real HTML report in all 9 services that have tests, with numbers that
+  track the actual mocking choices already made — `seat-service`'s service package hit 85%
+  instruction / 100% branch (concurrency + plain CRUD both covered), `flight-ops-service` sits at
+  47% (its controller layer and the enrichment fallback paths are the intentionally-untested
+  surface, consistent with "service layer only" from the Stage 11 test-coverage decision).
+  Caught and fixed one self-inflicted mistake immediately by re-reading the file after editing: the
+  first attempt at this edit left the root POM with two sibling `<properties>` blocks (should be
+  one) — a genuine reminder that editing near an existing block without reading its surrounding
+  structure first can silently duplicate rather than merge.
 
 ## Known gaps (in-progress build, not silently "fix")
 

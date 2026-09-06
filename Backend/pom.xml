@@ -35,6 +35,7 @@
 
         <spring.boot.version>4.0.2</spring.boot.version>
         <spring.cloud.version>2025.1.0</spring.cloud.version>
+        <jacoco.version>0.8.12</jacoco.version>
     </properties>
 
     <dependencyManagement>
@@ -78,6 +79,35 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+
+        <!--
+          Declared directly in <plugins>, not <pluginManagement>, so every child module inherits
+          it automatically (Maven's build-plugin inheritance) without needing to redeclare it -
+          unlike spring-boot-maven-plugin above, which each service opts into individually because
+          not every module (e.g. common-lib) is a runnable app.
+        -->
+        <plugins>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
 
 </project>

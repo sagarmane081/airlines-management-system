@@ -166,6 +166,16 @@ Micrometer Tracing does automatically once an outbox sits in the path.
 
 **Stage 12 is now fully done.**
 
+Also added since: JaCoCo, caught as a real gap (none of the test work above had any coverage
+reporting at all). Declared once in the root parent POM's `<build><plugins>` — not
+`<pluginManagement>`, where the other two build plugins live — specifically so every child module
+inherits it automatically without editing 15 individual poms. `mvn test` now produces a real HTML
+report per service (`target/site/jacoco/index.html`) right after tests run. Spot-checked the
+numbers rather than just confirming the plugin ran: `seat-service`'s service package is at 85%
+instruction / 100% branch coverage, `flight-ops-service` sits lower (47%) with the gap concentrated
+in its controller layer and enrichment fallback paths — consistent with the Stage 11 decision to
+test the service layer only, not a sign the plugin is misconfigured.
+
 The Stage 9 saga verified end-to-end: `POST /api/bookings` (booking-service, Feign → pricing-service
 for the real price, Feign → payment-service to initiate a PENDING payment) →
 `POST /api/payments/{id}/confirm` (payment-service, simulated confirmation — no real payment
