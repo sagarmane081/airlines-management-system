@@ -1,6 +1,6 @@
 package com.services.controller;
 
-import com.services.dto.FareDto;
+import com.common.dto.FareDto;
 import com.services.service.FareService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

@@ -15,15 +15,15 @@ without re-reading the whole conversation history.
 | 6 | Auth (`user-service`) — signup, login, JWT | ✅ Done |
 | 7 | Speed-run the repeats: `pricing-service`, `ancillary-service`, `seat-service` (data model only), `flight-ops-service` | ✅ Done |
 | 8 | Circuit breakers (Resilience4j) on the real Feign calls that now exist | ✅ Done |
-| 9 | Kafka + the booking/payment saga (`booking-service`, `payment-service`) | ⬜ Not started |
-| 10 | `notification-service` — pure Kafka consumer | ⬜ Not started |
-| 11 | Harden — seat concurrency (the headline work), idempotency, real exception handling, N+1 fixes, tests | ⬜ Not started |
+| 9 | Kafka + the booking/payment saga (`booking-service`, `payment-service`) | ✅ Done |
+| 10 | `notification-service` — pure Kafka consumer | ✅ Done |
+| 11 | Harden — seat concurrency ✅, idempotency, real exception handling, N+1 fixes, tests | 🟨 In progress |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
 
 Infra: MySQL (single container, `locationdb`, one database per service), `config-server` (8888),
-`service-registry`/Eureka (8761).
+`service-registry`/Eureka (8761), Kafka (standalone container, KRaft mode, port 9092).
 
 | Service | Port |
 |---|---|
@@ -35,6 +35,9 @@ Infra: MySQL (single container, `locationdb`, one database per service), `config
 | `ancillary-service` | 5006 |
 | `seat-service` | 5007 |
 | `flight-ops-service` | 5008 |
+| `booking-service` | 5009 |
+| `payment-service` | 5010 |
+| `notification-service` | none — no web server, no REST API, just a Kafka consumer |
 
 All 8 business services registered with Eureka using their **IP address**, not hostname (see
 "Eureka hostname gotcha" below) — required for `api-gateway`'s reactive load balancer to resolve
@@ -52,17 +55,48 @@ Open (fast, ~0.08s, fallback only, no wasted attempts) after 5 failures, then re
 
 ## Immediate next steps
 
-Kafka/saga (Stage 9) is next — the largest remaining chunk, with an open scope question (real
-payment gateway vs. simulated) still to decide when we get there.
+Stage 11 (harden) is underway. Seat concurrency — the headline item — is done: `seat-service`
+now holds a real pessimistic lock (`SELECT ... FOR UPDATE`) across a `@Transactional`
+`holdSeat(id)` method, exposed as `POST /api/seat-instances/{id}/hold`, atomically flipping
+AVAILABLE → HELD or rejecting with 409. `booking-service` now actually calls this (via a
+fallback-less `SeatClient`) instead of trusting a client-supplied `seatInstanceId`, and translates
+the 409 into a clean failure instead of creating a booking for a seat nobody actually holds.
+
+Verified two ways: `SeatInstanceConcurrencyTest` (seat-service's first test) races 15 threads
+against the same seat row on the real MySQL database and asserts exactly 1 wins — confirmed as a
+real negative control by temporarily reverting to a plain `findById` and watching the same test
+fail reproducibly (10 of 15 "won"). And live, end-to-end, through the real HTTP stack: 5 concurrent
+`POST /api/bookings` requests against one seat produced exactly one 201 and four clean 409s.
+
+Remaining in Stage 11: idempotency, real exception handling (still bare `RuntimeException` →
+500 everywhere outside the two new 409 paths), the N+1 Feign calls, and broader test coverage.
+
+The Stage 9 saga verified end-to-end: `POST /api/bookings` (booking-service, Feign → pricing-service
+for the real price, Feign → payment-service to initiate a PENDING payment) →
+`POST /api/payments/{id}/confirm` (payment-service, simulated confirmation — no real payment
+gateway) → publishes `PaymentCompletedEvent` → booking-service consumes it, flips the booking to
+CONFIRMED, publishes `BookingConfirmedEvent` → seat-service consumes it, flips the seat to BOOKED.
+Payment confirmation is simulated by a direct API call for now (no real gateway), by explicit scope
+decision — revisit only if a real payment integration becomes part of the learning goals.
+
+Stage 10 (`notification-service`) verified end-to-end too: the same `BookingConfirmedEvent` that
+flips the seat to BOOKED is also consumed by `notification-service`, which just logs a simulated
+"sending confirmation" line — no database, no REST API, no Eureka registration, since nothing ever
+needs to call it or discover it. It stays alive purely because the Kafka listener container's
+threads are non-daemon.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
-- Seat booking has no concurrency safety yet — its own dedicated stage, not a bug to patch now.
 - List endpoints doing Feign enrichment have an N+1 call pattern — deferred until it's slow enough
   to justify a bulk endpoint.
-- No tests anywhere yet, by explicit decision, except the concurrency test still to come.
+- Still no tests anywhere except `seat-service`'s new concurrency test — by explicit decision, not
+  an oversight.
 - No backend service reads the `X-User-Id`/`X-User-Roles` headers the gateway now forwards — no
   role-based authorization exists yet, just authentication at the edge.
+- `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
+  fallback (deliberately — see `CLAUDE.md`), and no compensation/rollback exists if payment
+  initiation fails after the booking row is already saved PENDING — that booking is just stuck,
+  never cancelled automatically. Saga compensation is real future work, not covered by Stage 9.
 
 ## Hard-won lessons from this build (see `CLAUDE.md` for the full list)
 

@@ -32,4 +32,9 @@ public class SeatInstanceController {
     public ResponseEntity<List<SeatInstanceDto>> getAllSeatInstances() {
         return ResponseEntity.ok(seatInstanceService.getAllSeatInstances());
     }
+
+    @PostMapping("/{id}/hold")
+    public ResponseEntity<SeatInstanceDto> holdSeat(@PathVariable Long id) {
+        return ResponseEntity.ok(seatInstanceService.holdSeat(id));
+    }
 }

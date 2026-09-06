@@ -2,9 +2,12 @@ package com.services.service;
 
 import com.services.dto.SeatInstanceDto;
 import com.services.entity.SeatInstance;
+import com.services.entity.SeatStatus;
+import com.services.exception.SeatNotAvailableException;
 import com.services.mapper.SeatInstanceMapper;
 import com.services.repository.SeatInstanceRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -30,5 +33,20 @@ public class SeatInstanceService {
 
     public List<SeatInstanceDto> getAllSeatInstances() {
         return seatInstanceRepository.findAll().stream().map(SeatInstanceMapper::toDto).toList();
+    }
+
+    @Transactional
+    public SeatInstanceDto holdSeat(Long id) {
+        SeatInstance seatInstance = seatInstanceRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new RuntimeException("SeatInstance not found with id: " + id));
+
+        if (seatInstance.getStatus() != SeatStatus.AVAILABLE) {
+            throw new SeatNotAvailableException(
+                    "Seat " + id + " is not available (status: " + seatInstance.getStatus() + ")");
+        }
+
+        seatInstance.setStatus(SeatStatus.HELD);
+        SeatInstance saved = seatInstanceRepository.save(seatInstance);
+        return SeatInstanceMapper.toDto(saved);
     }
 }

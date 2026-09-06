@@ -23,6 +23,9 @@ Backend/
   seat-service/         seat instances (no concurrency guard yet — deliberate)
   flight-ops-service/   flights + flight instances (Feign -> airline-core-service, location-service)
   user-service/         auth: signup + login/JWT issuance, both done
+  booking-service/      bookings (Feign -> pricing-service, payment-service; Kafka producer + consumer)
+  payment-service/      payments, simulated confirmation (Kafka producer)
+  notification-service/ pure Kafka consumer on booking.confirmed — no REST API, no database
 Frontend/               not started yet
 ```
 
@@ -116,11 +119,75 @@ noted below.
   explicitly** — it defaults to 100 if omitted, so a small `sliding-window-size` alone won't make a
   breaker trip quickly; without it, the breaker looks like it silently doesn't work under any
   small-scale test.
+- **Kafka runs as a standalone container** (`docker run --name kafka`, KRaft mode, no Zookeeper),
+  not part of docker-compose — same reasoning as the MySQL container. `KAFKA_ADVERTISED_LISTENERS`
+  must be `localhost:9092` (not the container's internal address), same class of fix as the Eureka
+  hostname issue, since our services run on the host, not inside Docker.
+- **Seat booking now uses pessimistic locking (`SELECT ... FOR UPDATE`), not optimistic.**
+  `SeatInstanceRepository.findByIdForUpdate` (`@Lock(LockModeType.PESSIMISTIC_WRITE)`) plus a
+  `@Transactional` `SeatInstanceService.holdSeat` — the lock is only meaningful for the life of one
+  transaction, so the read-check-write has to happen inside a single `@Transactional` method, not
+  split across separate repository calls (which would each get their own transaction/connection by
+  default and release the lock before the check-then-act completed). `POST /api/seat-instances/{id}/hold`
+  atomically flips AVAILABLE → HELD or throws `SeatNotAvailableException` (409). Chosen over
+  optimistic locking (`@Version`) because seat booking is exactly the high-contention, low-cardinality
+  case pessimistic locking is for — one specific row, multiple people racing for it at once — and
+  blocking-then-correct beats fail-after-the-fact-then-retry here.
+- **`booking-service` now actually calls `seat-service` to hold the seat** (`SeatClient`, no Feign
+  fallback — same reasoning as `PricingClient`/`PaymentClient`: a fake "seat held" response would be
+  actively dangerous, not gracefully degraded) — closing a real gap where it previously trusted a
+  client-supplied `seatInstanceId` with zero interaction with seat-service at all.
+- **`spring.cloud.openfeign.circuitbreaker.enabled=true` wraps *every* exception from a Feign call**
+  — including a legitimate 4xx client response, not just infra failures — in
+  `NoFallbackAvailableException` when no fallback bean exists for that client. Catching the concrete
+  exception type directly (e.g. `FeignException.Conflict`) silently never fires; you have to catch
+  `NoFallbackAvailableException` and check `getCause()`. Bit `booking-service`'s seat-conflict
+  handling: the 409 from `seat-service` was arriving fine, but the `catch (FeignException.Conflict)`
+  never matched, so it fell through to a bare 500 instead of translating to a clean 409.
+- **The seat-concurrency fix is proved by `SeatInstanceConcurrencyTest`** (seat-service's first and
+  currently only test) — 15 threads race `holdSeat` on the same seat row against the real MySQL
+  database (no mocking, no Testcontainers — same dev DB every service already uses), asserting
+  exactly 1 success and 14 `SeatNotAvailableException`s. Verified as a real negative control, not
+  just a passing assertion: swapping `findByIdForUpdate` back to plain `findById` made the same test
+  fail reproducibly (10 of 15 threads "won"), confirming the test actually catches the regression it
+  claims to.
+- **Not every service needs `spring-boot-starter-web` or Eureka.** `notification-service` is a
+  pure Kafka consumer — nothing ever calls it via REST or Feign, so it has no controller, no
+  database, and deliberately skips both `spring-boot-starter-web` and the Eureka client dependency.
+  It still starts and stays up because `spring-kafka`'s listener container runs on non-daemon
+  threads, which is enough to keep the JVM alive with no embedded server at all. Don't reflexively
+  copy the web+Eureka dependency block onto a service just because every other service has it —
+  check whether anything actually needs to call in or be discovered first.
+- **Spring Boot 4.0 split its autoconfiguration into per-technology modules** — the old trick of
+  just adding `spring-kafka` as a bare library dependency and getting `KafkaTemplate`/`@KafkaListener`
+  autoconfigured for free no longer works: `spring-boot-autoconfigure` no longer contains a
+  `kafka` package at all. The dependency is now `org.springframework.boot:spring-boot-starter-kafka`
+  (there's a matching `spring-boot-kafka` autoconfigure module it pulls in). Silent failure mode
+  without it: a `@KafkaListener` method compiles fine but never actually registers a listener (no
+  `@EnableKafka` gets activated), and a `KafkaTemplate<String, Object>` injection point throws
+  `UnsatisfiedDependencyException` at startup — both look like ordinary misconfiguration, not "wrong
+  artifact." Same modularization likely applies to other add-on techs going forward — if a starter
+  used to "just work" by adding the raw client library, check for a dedicated `spring-boot-starter-*`
+  first before assuming an autoconfiguration bug.
+- **The Kafka saga's producer→consumer wiring is eventually consistent with Eureka's registry
+  cache** — a service that just started may not yet see another service that registered moments
+  earlier (Eureka's client-side registry fetch interval, ~30s), causing a real, transient
+  `NoFallbackAvailableException`/503 on the very first Feign call after a fresh boot. Not a bug;
+  retrying after the registry catches up resolves it. This is also why `payment-service` and
+  `booking-service`'s Feign clients (`PricingClient`, `PaymentClient`) deliberately have **no**
+  fallback, unlike every other Feign client in the codebase: those calls determine money (a real
+  price, a real payment attempt), so a graceful placeholder-DTO fallback would silently let a
+  booking through with a fake price or a payment that was never actually initiated. Failing loudly
+  (503 → no fallback → 500) is the correct behavior here — enrichment calls (city/airline names)
+  get a placeholder fallback, financial calls do not.
+- **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
+  `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
+  before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.
+  Prefix the command with `MSYS_NO_PATHCONV=1` whenever a docker command's arguments contain a
+  Unix-style path meant to stay literal.
 
 ## Known gaps (in-progress build, not silently "fix")
 
-- `seat-service.SeatInstance.status` has zero concurrency safety — two requests can "book" the same
-  seat right now. Deliberately deferred to its own dedicated, slow stage.
 - List endpoints that enrich via Feign (`airline-core-service.getAllAirlines`,
   `flight-ops-service.getAllFlights`/`getAllFlightInstances`) make one Feign call per row — real
   N+1, deferred until it's actually slow enough to matter.

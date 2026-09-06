@@ -1,6 +1,6 @@
 package com.services.service;
 
-import com.services.dto.FareDto;
+import com.common.dto.FareDto;
 import com.services.entity.Fare;
 import com.services.mapper.FareMapper;
 import com.services.repository.FareRepository;

@@ -1,4 +1,4 @@
-package com.services.dto;
+package com.common.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -9,10 +9,9 @@ import java.math.BigDecimal;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class FareDto {
+public class PaymentDto {
     private Long id;
-    private Long flightId;
-    private String cabinClass;
-    private BigDecimal price;
-    private String currency;
+    private Long bookingId;
+    private BigDecimal amount;
+    private String status;
 }
