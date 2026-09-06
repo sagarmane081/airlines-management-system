@@ -33,17 +33,33 @@ public class AircraftService {
         this.airlineService = airlineService;
     }
 
-    public AircraftDto createAircraft(AircraftDto aircraftDto, String requesterRole) {
+    public AircraftDto createAircraft(AircraftDto aircraftDto, Long requesterId, String requesterRole) {
         if (!ROLE_AIRLINE_OWNER.equals(requesterRole) && !ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
             throw new ForbiddenException("Only " + ROLE_AIRLINE_OWNER + " or " + ROLE_SYSTEM_ADMIN + " can create aircraft");
         }
         Long airlineId = aircraftDto.getAirline() != null ? aircraftDto.getAirline().getId() : null;
         Airline airline = airlineRepository.findById(airlineId)
                 .orElseThrow(() -> new ResourceNotFoundException("Airline not found with id: " + airlineId));
+        requireAirlineOwnership(airline, requesterId, requesterRole);
 
         Aircraft saved = aircraftRepository.save(AircraftMapper.toEntity(aircraftDto, airline));
         AirlineDto airlineDto = airlineService.getAirlineById(saved.getAirline().getId());
         return AircraftMapper.toDto(saved, airlineDto);
+    }
+
+    /**
+     * A ROLE_AIRLINE_OWNER may only manage their own airline's fleet - ROLE_SYSTEM_ADMIN bypasses
+     * this since admins manage any airline. Airline is fetched locally (same service, same DB), so
+     * no Feign call is needed here, unlike the equivalent check in other services.
+     */
+    private void requireAirlineOwnership(Airline airline, Long requesterId, String requesterRole) {
+        if (ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
+            return;
+        }
+        boolean isOwner = airline.getOwnerId() != null && airline.getOwnerId().equals(requesterId);
+        if (!isOwner) {
+            throw new ForbiddenException("Airline " + airline.getId() + " is not owned by the requesting user");
+        }
     }
 
     public AircraftDto getAircraftById(Long id) {

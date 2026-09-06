@@ -25,4 +25,6 @@ public class Airline {
     private String iataCode;
 
     private Long headquartersCityId;
+
+    private Long ownerId;
 }

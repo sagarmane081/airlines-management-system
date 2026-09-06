@@ -39,19 +39,19 @@ class AircraftServiceTest {
     private AircraftService aircraftService;
 
     private Airline airline() {
-        return new Airline(10L, "Air India", "AI", 100L);
+        return new Airline(10L, "Air India", "AI", 100L, 42L);
     }
 
     @Test
-    void createAircraftSavesAndReturnsDtoForAirlineOwner() {
+    void createAircraftSavesAndReturnsDtoForOwningAirlineOwner() {
         AircraftDto request = new AircraftDto(null, "VT-ABC", "737-800", "Boeing", 189, "ACTIVE",
-                new AirlineDto(10L, null, null, null));
+                new AirlineDto(10L, null, null, null, null));
         when(airlineRepository.findById(10L)).thenReturn(Optional.of(airline()));
         Aircraft saved = new Aircraft(1L, "VT-ABC", "737-800", "Boeing", 189, AircraftStatus.ACTIVE, airline());
         when(aircraftRepository.save(any(Aircraft.class))).thenReturn(saved);
-        when(airlineService.getAirlineById(10L)).thenReturn(new AirlineDto(10L, "Air India", "AI", null));
+        when(airlineService.getAirlineById(10L)).thenReturn(new AirlineDto(10L, "Air India", "AI", null, 42L));
 
-        AircraftDto result = aircraftService.createAircraft(request, "ROLE_AIRLINE_OWNER");
+        AircraftDto result = aircraftService.createAircraft(request, 42L, "ROLE_AIRLINE_OWNER");
 
         assertEquals(1L, result.getId());
         assertEquals("VT-ABC", result.getRegistrationNumber());
@@ -62,20 +62,44 @@ class AircraftServiceTest {
     @Test
     void createAircraftThrowsForbiddenForCustomer() {
         AircraftDto request = new AircraftDto(null, "VT-ABC", "737-800", "Boeing", 189, "ACTIVE",
-                new AirlineDto(10L, null, null, null));
+                new AirlineDto(10L, null, null, null, null));
 
-        assertThrows(ForbiddenException.class, () -> aircraftService.createAircraft(request, "ROLE_CUSTOMER"));
+        assertThrows(ForbiddenException.class, () -> aircraftService.createAircraft(request, 1L, "ROLE_CUSTOMER"));
         verify(aircraftRepository, never()).save(any());
         verifyNoInteractions(airlineRepository, airlineService);
     }
 
     @Test
+    void createAircraftThrowsForbiddenForNonOwningAirlineOwner() {
+        AircraftDto request = new AircraftDto(null, "VT-ABC", "737-800", "Boeing", 189, "ACTIVE",
+                new AirlineDto(10L, null, null, null, null));
+        when(airlineRepository.findById(10L)).thenReturn(Optional.of(airline()));
+
+        assertThrows(ForbiddenException.class, () -> aircraftService.createAircraft(request, 999L, "ROLE_AIRLINE_OWNER"));
+        verify(aircraftRepository, never()).save(any());
+    }
+
+    @Test
+    void createAircraftSucceedsForSystemAdminEvenWhenNotOwner() {
+        AircraftDto request = new AircraftDto(null, "VT-ABC", "737-800", "Boeing", 189, "ACTIVE",
+                new AirlineDto(10L, null, null, null, null));
+        when(airlineRepository.findById(10L)).thenReturn(Optional.of(airline()));
+        Aircraft saved = new Aircraft(1L, "VT-ABC", "737-800", "Boeing", 189, AircraftStatus.ACTIVE, airline());
+        when(aircraftRepository.save(any(Aircraft.class))).thenReturn(saved);
+        when(airlineService.getAirlineById(10L)).thenReturn(new AirlineDto(10L, "Air India", "AI", null, 42L));
+
+        AircraftDto result = aircraftService.createAircraft(request, 999L, "ROLE_SYSTEM_ADMIN");
+
+        assertEquals(1L, result.getId());
+    }
+
+    @Test
     void createAircraftThrowsWhenAirlineMissing() {
         AircraftDto request = new AircraftDto(null, "VT-ABC", "737-800", "Boeing", 189, "ACTIVE",
-                new AirlineDto(999L, null, null, null));
+                new AirlineDto(999L, null, null, null, null));
         when(airlineRepository.findById(999L)).thenReturn(Optional.empty());
 
-        assertThrows(ResourceNotFoundException.class, () -> aircraftService.createAircraft(request, "ROLE_SYSTEM_ADMIN"));
+        assertThrows(ResourceNotFoundException.class, () -> aircraftService.createAircraft(request, 42L, "ROLE_SYSTEM_ADMIN"));
         verify(aircraftRepository, never()).save(any());
     }
 
@@ -91,7 +115,7 @@ class AircraftServiceTest {
         when(aircraftRepository.findAll()).thenReturn(List.of(
                 new Aircraft(1L, "VT-ABC", "737-800", "Boeing", 189, AircraftStatus.ACTIVE, airline()),
                 new Aircraft(2L, "VT-XYZ", "A320", "Airbus", 180, AircraftStatus.MAINTENANCE, airline())));
-        when(airlineService.getAirlinesByIds(anyList())).thenReturn(List.of(new AirlineDto(10L, "Air India", "AI", null)));
+        when(airlineService.getAirlinesByIds(anyList())).thenReturn(List.of(new AirlineDto(10L, "Air India", "AI", null, 42L)));
 
         List<AircraftDto> result = aircraftService.getAllAircraft();
 

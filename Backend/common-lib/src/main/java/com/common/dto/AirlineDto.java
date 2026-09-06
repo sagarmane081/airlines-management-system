@@ -12,4 +12,5 @@ public class AirlineDto {
     private String name;
     private String iataCode;
     private CityDto headquartersCity;
+    private Long ownerId;
 }

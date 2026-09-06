@@ -12,6 +12,7 @@ public class AncillaryMapper {
         dto.setDescription(ancillary.getDescription());
         dto.setPrice(ancillary.getPrice());
         dto.setType(ancillary.getType());
+        dto.setAirlineId(ancillary.getAirlineId());
         return dto;
     }
 
@@ -22,6 +23,7 @@ public class AncillaryMapper {
         ancillary.setDescription(dto.getDescription());
         ancillary.setPrice(dto.getPrice());
         ancillary.setType(dto.getType());
+        ancillary.setAirlineId(dto.getAirlineId());
         return ancillary;
     }
 }

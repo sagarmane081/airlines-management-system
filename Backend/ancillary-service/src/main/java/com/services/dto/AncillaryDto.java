@@ -16,4 +16,5 @@ public class AncillaryDto {
     private String description;
     private BigDecimal price;
     private AncillaryType type;
+    private Long airlineId;
 }

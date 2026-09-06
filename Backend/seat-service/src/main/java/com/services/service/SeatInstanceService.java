@@ -1,5 +1,8 @@
 package com.services.service;
 
+import com.common.dto.AirlineDto;
+import com.services.client.FlightClient;
+import com.services.dto.FlightInstanceOwnerView;
 import com.services.dto.SeatInstanceDto;
 import com.services.entity.SeatInstance;
 import com.services.entity.SeatStatus;
@@ -21,17 +24,32 @@ public class SeatInstanceService {
     private static final String ROLE_SYSTEM_ADMIN = "ROLE_SYSTEM_ADMIN";
 
     private final SeatInstanceRepository seatInstanceRepository;
+    private final FlightClient flightClient;
 
-    public SeatInstanceService(SeatInstanceRepository seatInstanceRepository) {
+    public SeatInstanceService(SeatInstanceRepository seatInstanceRepository, FlightClient flightClient) {
         this.seatInstanceRepository = seatInstanceRepository;
+        this.flightClient = flightClient;
     }
 
-    public SeatInstanceDto createSeatInstance(SeatInstanceDto seatInstanceDto, String requesterRole) {
+    public SeatInstanceDto createSeatInstance(SeatInstanceDto seatInstanceDto, Long requesterId, String requesterRole) {
         if (!ROLE_AIRLINE_OWNER.equals(requesterRole) && !ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
             throw new ForbiddenException("Only " + ROLE_AIRLINE_OWNER + " or " + ROLE_SYSTEM_ADMIN + " can create seat instances");
         }
+        FlightInstanceOwnerView flightInstance = flightClient.getFlightInstanceById(seatInstanceDto.getFlightInstanceId());
+        requireAirlineOwnership(flightInstance.getFlight().getAirline(), requesterId, requesterRole);
+
         SeatInstance saved = seatInstanceRepository.save(SeatInstanceMapper.toEntity(seatInstanceDto));
         return SeatInstanceMapper.toDto(saved);
+    }
+
+    private void requireAirlineOwnership(AirlineDto airline, Long requesterId, String requesterRole) {
+        if (ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
+            return;
+        }
+        boolean isOwner = airline.getOwnerId() != null && airline.getOwnerId().equals(requesterId);
+        if (!isOwner) {
+            throw new ForbiddenException("Airline " + airline.getId() + " is not owned by the requesting user");
+        }
     }
 
     public SeatInstanceDto getSeatInstanceById(Long id) {

@@ -35,11 +35,11 @@ class AirlineServiceTest {
 
     @Test
     void createAirlineEnrichesWithCityForSystemAdmin() {
-        Airline saved = new Airline(1L, "Air India", "AI", 5L);
+        Airline saved = new Airline(1L, "Air India", "AI", 5L, 42L);
         when(airlineRepository.save(any(Airline.class))).thenReturn(saved);
         when(locationClient.getCityById(5L)).thenReturn(new CityDto(5L, "Mumbai", "India", "Asia/Kolkata"));
 
-        AirlineDto request = new AirlineDto(null, "Air India", "AI", new CityDto(5L, null, null, null));
+        AirlineDto request = new AirlineDto(null, "Air India", "AI", new CityDto(5L, null, null, null), 42L);
         AirlineDto result = airlineService.createAirline(request, "ROLE_SYSTEM_ADMIN");
 
         assertEquals("Mumbai", result.getHeadquartersCity().getName());
@@ -47,7 +47,7 @@ class AirlineServiceTest {
 
     @Test
     void createAirlineThrowsForbiddenForNonAdmin() {
-        AirlineDto request = new AirlineDto(null, "Air India", "AI", new CityDto(5L, null, null, null));
+        AirlineDto request = new AirlineDto(null, "Air India", "AI", new CityDto(5L, null, null, null), 42L);
 
         assertThrows(ForbiddenException.class, () -> airlineService.createAirline(request, "ROLE_AIRLINE_OWNER"));
         verify(airlineRepository, never()).save(any());
@@ -65,8 +65,8 @@ class AirlineServiceTest {
     @Test
     void getAllAirlinesMakesExactlyOneBulkCityCall() {
         when(airlineRepository.findAll()).thenReturn(List.of(
-                new Airline(1L, "Air India", "AI", 5L),
-                new Airline(2L, "IndiGo", "6E", 6L)));
+                new Airline(1L, "Air India", "AI", 5L, 42L),
+                new Airline(2L, "IndiGo", "6E", 6L, 43L)));
         when(locationClient.getCitiesByIds(anyList())).thenReturn(List.of(
                 new CityDto(5L, "Mumbai", "India", "Asia/Kolkata"),
                 new CityDto(6L, "Delhi", "India", "Asia/Kolkata")));

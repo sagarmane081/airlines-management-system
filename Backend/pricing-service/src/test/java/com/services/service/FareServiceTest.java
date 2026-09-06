@@ -1,6 +1,9 @@
 package com.services.service;
 
+import com.common.dto.AirlineDto;
 import com.common.dto.FareDto;
+import com.services.client.FlightClient;
+import com.services.dto.FlightOwnerView;
 import com.services.entity.Fare;
 import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
@@ -25,16 +28,24 @@ class FareServiceTest {
     @Mock
     private FareRepository fareRepository;
 
+    @Mock
+    private FlightClient flightClient;
+
     @InjectMocks
     private FareService fareService;
 
+    private FlightOwnerView flightOwnedBy(Long ownerId) {
+        return new FlightOwnerView(1L, new AirlineDto(10L, "Air India", "AI", null, ownerId));
+    }
+
     @Test
-    void createFareSavesAndReturnsDtoForAirlineOwner() {
+    void createFareSavesAndReturnsDtoForOwningAirlineOwner() {
         FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        when(flightClient.getFlightById(1L)).thenReturn(flightOwnedBy(42L));
         Fare saved = new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
         when(fareRepository.save(any(Fare.class))).thenReturn(saved);
 
-        FareDto result = fareService.createFare(request, "ROLE_AIRLINE_OWNER");
+        FareDto result = fareService.createFare(request, 42L, "ROLE_AIRLINE_OWNER");
 
         assertEquals(1L, result.getId());
         assertEquals(BigDecimal.valueOf(250), result.getPrice());
@@ -44,8 +55,30 @@ class FareServiceTest {
     void createFareThrowsForbiddenForCustomer() {
         FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
 
-        assertThrows(ForbiddenException.class, () -> fareService.createFare(request, "ROLE_CUSTOMER"));
+        assertThrows(ForbiddenException.class, () -> fareService.createFare(request, 1L, "ROLE_CUSTOMER"));
         verify(fareRepository, never()).save(any());
+        verifyNoInteractions(flightClient);
+    }
+
+    @Test
+    void createFareThrowsForbiddenForNonOwningAirlineOwner() {
+        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        when(flightClient.getFlightById(1L)).thenReturn(flightOwnedBy(42L));
+
+        assertThrows(ForbiddenException.class, () -> fareService.createFare(request, 999L, "ROLE_AIRLINE_OWNER"));
+        verify(fareRepository, never()).save(any());
+    }
+
+    @Test
+    void createFareSucceedsForSystemAdminEvenWhenNotOwner() {
+        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        when(flightClient.getFlightById(1L)).thenReturn(flightOwnedBy(42L));
+        Fare saved = new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        when(fareRepository.save(any(Fare.class))).thenReturn(saved);
+
+        FareDto result = fareService.createFare(request, 999L, "ROLE_SYSTEM_ADMIN");
+
+        assertEquals(1L, result.getId());
     }
 
     @Test

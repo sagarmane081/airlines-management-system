@@ -20,8 +20,9 @@ public class FareController {
 
     @PostMapping
     public ResponseEntity<FareDto> createFare(@RequestBody FareDto fareDto,
+                                               @RequestHeader("X-User-Id") Long requesterId,
                                                @RequestHeader("X-User-Roles") String role) {
-        return new ResponseEntity<>(fareService.createFare(fareDto, role), HttpStatus.CREATED);
+        return new ResponseEntity<>(fareService.createFare(fareDto, requesterId, role), HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")

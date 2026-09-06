@@ -32,4 +32,6 @@ public class Ancillary {
 
     @Enumerated(EnumType.STRING)
     private AncillaryType type;
+
+    private Long airlineId;
 }

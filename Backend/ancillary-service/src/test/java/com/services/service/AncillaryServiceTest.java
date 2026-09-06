@@ -1,5 +1,7 @@
 package com.services.service;
 
+import com.common.dto.AirlineDto;
+import com.services.client.AirlineClient;
 import com.services.dto.AncillaryDto;
 import com.services.entity.Ancillary;
 import com.services.entity.AncillaryType;
@@ -26,16 +28,24 @@ class AncillaryServiceTest {
     @Mock
     private AncillaryRepository ancillaryRepository;
 
+    @Mock
+    private AirlineClient airlineClient;
+
     @InjectMocks
     private AncillaryService ancillaryService;
 
+    private AirlineDto airlineOwnedBy(Long ownerId) {
+        return new AirlineDto(10L, "Air India", "AI", null, ownerId);
+    }
+
     @Test
-    void createAncillarySavesAndReturnsDtoForAirlineOwner() {
-        AncillaryDto request = new AncillaryDto(null, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE);
-        Ancillary saved = new Ancillary(1L, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE);
+    void createAncillarySavesAndReturnsDtoForOwningAirlineOwner() {
+        AncillaryDto request = new AncillaryDto(null, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE, 10L);
+        when(airlineClient.getAirlineById(10L)).thenReturn(airlineOwnedBy(42L));
+        Ancillary saved = new Ancillary(1L, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE, 10L);
         when(ancillaryRepository.save(any(Ancillary.class))).thenReturn(saved);
 
-        AncillaryDto result = ancillaryService.createAncillary(request, "ROLE_AIRLINE_OWNER");
+        AncillaryDto result = ancillaryService.createAncillary(request, 42L, "ROLE_AIRLINE_OWNER");
 
         assertEquals(1L, result.getId());
         assertEquals(AncillaryType.BAGGAGE, result.getType());
@@ -43,15 +53,37 @@ class AncillaryServiceTest {
 
     @Test
     void createAncillaryThrowsForbiddenForCustomer() {
-        AncillaryDto request = new AncillaryDto(null, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE);
+        AncillaryDto request = new AncillaryDto(null, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE, 10L);
 
-        assertThrows(ForbiddenException.class, () -> ancillaryService.createAncillary(request, "ROLE_CUSTOMER"));
+        assertThrows(ForbiddenException.class, () -> ancillaryService.createAncillary(request, 1L, "ROLE_CUSTOMER"));
+        verify(ancillaryRepository, never()).save(any());
+        verifyNoInteractions(airlineClient);
+    }
+
+    @Test
+    void createAncillaryThrowsForbiddenForNonOwningAirlineOwner() {
+        AncillaryDto request = new AncillaryDto(null, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE, 10L);
+        when(airlineClient.getAirlineById(10L)).thenReturn(airlineOwnedBy(42L));
+
+        assertThrows(ForbiddenException.class, () -> ancillaryService.createAncillary(request, 999L, "ROLE_AIRLINE_OWNER"));
         verify(ancillaryRepository, never()).save(any());
     }
 
     @Test
+    void createAncillarySucceedsForSystemAdminEvenWhenNotOwner() {
+        AncillaryDto request = new AncillaryDto(null, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE, 10L);
+        when(airlineClient.getAirlineById(10L)).thenReturn(airlineOwnedBy(42L));
+        Ancillary saved = new Ancillary(1L, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE, 10L);
+        when(ancillaryRepository.save(any(Ancillary.class))).thenReturn(saved);
+
+        AncillaryDto result = ancillaryService.createAncillary(request, 999L, "ROLE_SYSTEM_ADMIN");
+
+        assertEquals(1L, result.getId());
+    }
+
+    @Test
     void getAncillaryByIdReturnsDtoWhenFound() {
-        Ancillary ancillary = new Ancillary(1L, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE);
+        Ancillary ancillary = new Ancillary(1L, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE, 10L);
         when(ancillaryRepository.findById(1L)).thenReturn(Optional.of(ancillary));
 
         AncillaryDto result = ancillaryService.getAncillaryById(1L);
@@ -69,8 +101,8 @@ class AncillaryServiceTest {
     @Test
     void getAllAncillariesMapsEveryRow() {
         when(ancillaryRepository.findAll()).thenReturn(List.of(
-                new Ancillary(1L, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE),
-                new Ancillary(2L, "Wifi", "In-flight wifi", BigDecimal.valueOf(15), AncillaryType.WIFI)));
+                new Ancillary(1L, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE, 10L),
+                new Ancillary(2L, "Wifi", "In-flight wifi", BigDecimal.valueOf(15), AncillaryType.WIFI, 10L)));
 
         List<AncillaryDto> result = ancillaryService.getAllAncillaries();
 

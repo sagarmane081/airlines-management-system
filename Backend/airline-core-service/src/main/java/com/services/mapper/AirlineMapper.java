@@ -12,6 +12,7 @@ public class AirlineMapper {
         dto.setName(airline.getName());
         dto.setIataCode(airline.getIataCode());
         dto.setHeadquartersCity(headquartersCity);
+        dto.setOwnerId(airline.getOwnerId());
         return dto;
     }
 
@@ -23,6 +24,7 @@ public class AirlineMapper {
         if (dto.getHeadquartersCity() != null) {
             airline.setHeadquartersCityId(dto.getHeadquartersCity().getId());
         }
+        airline.setOwnerId(dto.getOwnerId());
         return airline;
     }
 }

@@ -374,6 +374,47 @@ noted below.
   and their new endpoints were already up and correct. Same class of gotcha as the "every already-
   running service must restart to see a shared `config-repo/application.yml` change" note below,
   just for the gateway's *own* local file instead of the shared remote one.
+- **Airline-ownership authorization: `Airline` gained `ownerId`, stamped by the request body, not
+  the requester header.** Unlike `Booking.userId` (stamped from `X-User-Id` since a customer books
+  for themselves), `POST /api/airlines` is admin-only - the admin creating an airline is never its
+  owner, so `ownerId` has to be an explicit field in the request, identifying which
+  `ROLE_AIRLINE_OWNER` user the airline belongs to. Every owner-gated `create*` method across 5
+  services now takes a `requesterId` alongside `requesterRole`, and a small duplicated
+  `requireAirlineOwnership(airline, requesterId, requesterRole)` helper (admin bypasses, owner must
+  match `airline.getOwnerId()`) gates the actual write - same "duplicate the small check per
+  service" reasoning as every other cross-service exception/guard in this codebase.
+- **Two shapes of ownership check, depending on whether the resource already has a path to its
+  airline.** `Aircraft` (airline-core-service) and `Flight`/`FlightInstance` (flight-ops-service,
+  already Feign-calling airline-core-service for enrichment) needed no new dependency - the
+  ownership check just reuses a call that already existed. `Fare` (pricing-service) and
+  `SeatInstance` (seat-service) had no path to an airline at all (only a `flightId`/
+  `flightInstanceId`), and `Ancillary` (ancillary-service) had no path to *anything* - it was a
+  flat, unscoped catalog row. Closing all three required real new work: `Ancillary` gained an
+  `airlineId` field (a genuine schema change, matching the original course design), and pricing-
+  service/seat-service each gained a brand-new Feign dependency on `flight-ops-service` purely to
+  resolve `flightId`/`flightInstanceId` → owning airline.
+- **These new ownership-check Feign clients deliberately have no fallback**, same reasoning as
+  `booking-service`'s `PricingClient`/`PaymentClient`: this is a decision, not a display value - a
+  fake "here's some airline" fallback would either silently let an unauthorized write through or
+  silently block a legitimate owner. If `flight-ops-service`/`airline-core-service` is unreachable,
+  fare/seat/ancillary creation now fails loudly (503 via `NoFallbackAvailableException`) instead of
+  degrading.
+- **A Feign client can request a narrower response shape than the endpoint's real return type,
+  relying on Spring Boot's default lenient Jackson deserialization.** `flight-ops-service`'s
+  `GET /api/flights/{id}` returns a full `FlightDto` (flight number, both airports, nested airline),
+  but `pricing-service` only needs `{id, airline}` to check ownership - so its `FlightClient`
+  declares a local `FlightOwnerView` with just those two fields instead of promoting the whole
+  `FlightDto` to `common-lib`. This works because Spring Boot's Jackson auto-config ignores unknown
+  JSON properties by default; the extra fields in the real response (`flightNumber`,
+  `departureAirport`, `arrivalAirport`) are silently dropped rather than causing a deserialization
+  error. First use of this narrower-projection pattern in the codebase - every prior Feign client
+  matched its endpoint's response type exactly.
+- **Verified live with two separate airline owners, not just unit tests**: admin created "Airline
+  A" (owned by user 12) and "Airline B" (owned by user 13); Owner A could create an aircraft/flight/
+  flight-instance/fare/seat-instance/ancillary under Airline A but got 403 attempting the same under
+  Airline B; Owner B got 403 attempting to touch any of Airline A's resources; admin succeeded on
+  Airline A's resources despite not being its owner. All six owner-gated resources confirmed in one
+  pass through the real gateway.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.
@@ -559,12 +600,12 @@ noted below.
 ## Known gaps (in-progress build, not silently "fix")
 
 - Services are still directly reachable bypassing `api-gateway` — the trusted-header authorization
-  model (role gates + booking-ownership check) assumes every request arrives via the gateway, but
-  nothing enforces that at the network level. A request straight to a service's own port could set
-  `X-User-Id`/`X-User-Roles` to anything.
-- No backend service does deeper authorization than "does this role/user match" — e.g. no check
-  that an `ROLE_AIRLINE_OWNER` creating a fare/flight/seat actually belongs to the airline being
-  modified. Any airline owner can currently manage any airline's catalog data.
+  model (role gates + booking-ownership check + airline-ownership check) assumes every request
+  arrives via the gateway, but nothing enforces that at the network level. A request straight to a
+  service's own port could set `X-User-Id`/`X-User-Roles` to anything.
+- `Airline.ownerId` is admin-supplied and unvalidated — nothing checks that the assigned owner is
+  actually a real user, let alone one with `ROLE_AIRLINE_OWNER`. An admin could assign ownership to
+  a nonexistent or wrongly-roled user ID with no error.
 - `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
   fallback (deliberately — see the money-critical-calls entry above), and no compensation/rollback
   exists if payment initiation fails after the booking row is already saved PENDING — that booking

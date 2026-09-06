@@ -1,5 +1,9 @@
 package com.services.service;
 
+import com.common.dto.AirlineDto;
+import com.services.client.FlightClient;
+import com.services.dto.FlightInstanceOwnerView;
+import com.services.dto.FlightOwnerView;
 import com.services.dto.SeatInstanceDto;
 import com.services.entity.SeatInstance;
 import com.services.entity.SeatStatus;
@@ -27,16 +31,24 @@ class SeatInstanceServiceTest {
     @Mock
     private SeatInstanceRepository seatInstanceRepository;
 
+    @Mock
+    private FlightClient flightClient;
+
     @InjectMocks
     private SeatInstanceService seatInstanceService;
 
+    private FlightInstanceOwnerView flightInstanceOwnedBy(Long ownerId) {
+        return new FlightInstanceOwnerView(1L, new FlightOwnerView(1L, new AirlineDto(10L, "Air India", "AI", null, ownerId)));
+    }
+
     @Test
-    void createSeatInstanceSavesAndReturnsDtoForAirlineOwner() {
+    void createSeatInstanceSavesAndReturnsDtoForOwningAirlineOwner() {
         SeatInstanceDto request = new SeatInstanceDto(null, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
+        when(flightClient.getFlightInstanceById(1L)).thenReturn(flightInstanceOwnedBy(42L));
         SeatInstance saved = new SeatInstance(1L, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
         when(seatInstanceRepository.save(any(SeatInstance.class))).thenReturn(saved);
 
-        SeatInstanceDto result = seatInstanceService.createSeatInstance(request, "ROLE_AIRLINE_OWNER");
+        SeatInstanceDto result = seatInstanceService.createSeatInstance(request, 42L, "ROLE_AIRLINE_OWNER");
 
         assertEquals(1L, result.getId());
         assertEquals(SeatStatus.AVAILABLE, result.getStatus());
@@ -46,8 +58,30 @@ class SeatInstanceServiceTest {
     void createSeatInstanceThrowsForbiddenForCustomer() {
         SeatInstanceDto request = new SeatInstanceDto(null, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
 
-        assertThrows(ForbiddenException.class, () -> seatInstanceService.createSeatInstance(request, "ROLE_CUSTOMER"));
+        assertThrows(ForbiddenException.class, () -> seatInstanceService.createSeatInstance(request, 1L, "ROLE_CUSTOMER"));
         verify(seatInstanceRepository, never()).save(any());
+        verifyNoInteractions(flightClient);
+    }
+
+    @Test
+    void createSeatInstanceThrowsForbiddenForNonOwningAirlineOwner() {
+        SeatInstanceDto request = new SeatInstanceDto(null, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
+        when(flightClient.getFlightInstanceById(1L)).thenReturn(flightInstanceOwnedBy(42L));
+
+        assertThrows(ForbiddenException.class, () -> seatInstanceService.createSeatInstance(request, 999L, "ROLE_AIRLINE_OWNER"));
+        verify(seatInstanceRepository, never()).save(any());
+    }
+
+    @Test
+    void createSeatInstanceSucceedsForSystemAdminEvenWhenNotOwner() {
+        SeatInstanceDto request = new SeatInstanceDto(null, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
+        when(flightClient.getFlightInstanceById(1L)).thenReturn(flightInstanceOwnedBy(42L));
+        SeatInstance saved = new SeatInstance(1L, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
+        when(seatInstanceRepository.save(any(SeatInstance.class))).thenReturn(saved);
+
+        SeatInstanceDto result = seatInstanceService.createSeatInstance(request, 999L, "ROLE_SYSTEM_ADMIN");
+
+        assertEquals(1L, result.getId());
     }
 
     @Test

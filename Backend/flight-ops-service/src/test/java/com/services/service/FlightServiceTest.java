@@ -51,6 +51,10 @@ class FlightServiceTest {
     @InjectMocks
     private FlightService flightService;
 
+    private AirlineDto airlineOwnedBy(Long ownerId) {
+        return new AirlineDto(10L, "Air India", "AI", null, ownerId);
+    }
+
     @Test
     void getFlightByIdThrowsWhenMissing() {
         when(flightRepository.findById(99L)).thenReturn(Optional.empty());
@@ -66,8 +70,8 @@ class FlightServiceTest {
         when(flightRepository.findAll()).thenReturn(List.of(flight1, flight2));
 
         when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(
-                new AirlineDto(10L, "Air India", "AI", null),
-                new AirlineDto(20L, "IndiGo", "6E", null)));
+                new AirlineDto(10L, "Air India", "AI", null, 42L),
+                new AirlineDto(20L, "IndiGo", "6E", null, 43L)));
         when(locationClient.getAirportsByIds(anyList())).thenReturn(List.of(
                 new AirportDto(100L, "BOM", "Mumbai Airport", null),
                 new AirportDto(200L, "DEL", "Delhi Airport", null),
@@ -89,7 +93,7 @@ class FlightServiceTest {
         FlightInstance instance2 = new FlightInstance(2L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, null);
         when(flightInstanceRepository.findAll()).thenReturn(List.of(instance1, instance2));
 
-        when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(new AirlineDto(10L, "Air India", "AI", null)));
+        when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(airlineOwnedBy(42L)));
         when(locationClient.getAirportsByIds(anyList())).thenReturn(List.of(new AirportDto(100L, "BOM", "Mumbai Airport", null)));
 
         List<FlightInstanceDto> result = flightService.getAllFlightInstances();
@@ -110,7 +114,7 @@ class FlightServiceTest {
         FlightInstance instance2 = new FlightInstance(2L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, 500L);
         when(flightInstanceRepository.findAll()).thenReturn(List.of(instance1, instance2));
 
-        when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(new AirlineDto(10L, "Air India", "AI", null)));
+        when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(airlineOwnedBy(42L)));
         when(locationClient.getAirportsByIds(anyList())).thenReturn(List.of(new AirportDto(100L, "BOM", "Mumbai Airport", null)));
         when(aircraftClient.getAircraftByIds(anyList())).thenReturn(List.of(new AircraftDto(500L, "VT-ABC", "737-800", "Boeing", 189, "ACTIVE", null)));
 
@@ -122,28 +126,53 @@ class FlightServiceTest {
     }
 
     @Test
-    void createFlightSavesAndEnrichesForAirlineOwner() {
+    void createFlightSavesAndEnrichesForOwningAirlineOwner() {
         Flight saved = new Flight(1L, 10L, "AI101", 100L, 100L);
         when(flightRepository.save(any(Flight.class))).thenReturn(saved);
-        when(airlineClient.getAirlineById(10L)).thenReturn(new AirlineDto(10L, "Air India", "AI", null));
+        when(airlineClient.getAirlineById(10L)).thenReturn(airlineOwnedBy(42L));
         when(locationClient.getAirportById(100L)).thenReturn(new AirportDto(100L, "BOM", "Mumbai Airport", null));
 
-        FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null),
+        FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null, null),
                 new AirportDto(100L, null, null, null), new AirportDto(100L, null, null, null));
 
-        FlightDto result = flightService.createFlight(request, "ROLE_AIRLINE_OWNER");
+        FlightDto result = flightService.createFlight(request, 42L, "ROLE_AIRLINE_OWNER");
 
         assertEquals("AI101", result.getFlightNumber());
     }
 
     @Test
     void createFlightThrowsForbiddenForCustomer() {
-        FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null),
+        FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null, null),
                 new AirportDto(100L, null, null, null), new AirportDto(100L, null, null, null));
 
-        assertThrows(ForbiddenException.class, () -> flightService.createFlight(request, "ROLE_CUSTOMER"));
+        assertThrows(ForbiddenException.class, () -> flightService.createFlight(request, 1L, "ROLE_CUSTOMER"));
         verify(flightRepository, never()).save(any());
         verifyNoInteractions(airlineClient, locationClient);
+    }
+
+    @Test
+    void createFlightThrowsForbiddenForNonOwningAirlineOwner() {
+        when(airlineClient.getAirlineById(10L)).thenReturn(airlineOwnedBy(42L));
+        FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null, null),
+                new AirportDto(100L, null, null, null), new AirportDto(100L, null, null, null));
+
+        assertThrows(ForbiddenException.class, () -> flightService.createFlight(request, 999L, "ROLE_AIRLINE_OWNER"));
+        verify(flightRepository, never()).save(any());
+    }
+
+    @Test
+    void createFlightSucceedsForSystemAdminEvenWhenNotOwner() {
+        Flight saved = new Flight(1L, 10L, "AI101", 100L, 100L);
+        when(flightRepository.save(any(Flight.class))).thenReturn(saved);
+        when(airlineClient.getAirlineById(10L)).thenReturn(airlineOwnedBy(42L));
+        when(locationClient.getAirportById(100L)).thenReturn(new AirportDto(100L, "BOM", "Mumbai Airport", null));
+
+        FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null, null),
+                new AirportDto(100L, null, null, null), new AirportDto(100L, null, null, null));
+
+        FlightDto result = flightService.createFlight(request, 999L, "ROLE_SYSTEM_ADMIN");
+
+        assertEquals("AI101", result.getFlightNumber());
     }
 
     @Test
@@ -153,8 +182,23 @@ class FlightServiceTest {
         FlightInstanceDto request = new FlightInstanceDto();
         request.setFlight(flightRef);
 
-        assertThrows(ForbiddenException.class, () -> flightService.createFlightInstance(request, "ROLE_CUSTOMER"));
+        assertThrows(ForbiddenException.class, () -> flightService.createFlightInstance(request, 1L, "ROLE_CUSTOMER"));
         verifyNoInteractions(flightRepository, flightInstanceRepository);
+    }
+
+    @Test
+    void createFlightInstanceThrowsForbiddenForNonOwningAirlineOwner() {
+        Flight flight = new Flight(1L, 10L, "AI101", 100L, 100L);
+        when(flightRepository.findById(1L)).thenReturn(Optional.of(flight));
+        when(airlineClient.getAirlineById(10L)).thenReturn(airlineOwnedBy(42L));
+
+        FlightDto flightRef = new FlightDto();
+        flightRef.setId(1L);
+        FlightInstanceDto request = new FlightInstanceDto();
+        request.setFlight(flightRef);
+
+        assertThrows(ForbiddenException.class, () -> flightService.createFlightInstance(request, 999L, "ROLE_AIRLINE_OWNER"));
+        verify(flightInstanceRepository, never()).save(any());
     }
 
     @Test
@@ -166,7 +210,7 @@ class FlightServiceTest {
             instance.setId(1L);
             return instance;
         });
-        when(airlineClient.getAirlineById(10L)).thenReturn(new AirlineDto(10L, "Air India", "AI", null));
+        when(airlineClient.getAirlineById(10L)).thenReturn(airlineOwnedBy(42L));
         when(locationClient.getAirportById(100L)).thenReturn(new AirportDto(100L, "BOM", "Mumbai Airport", null));
         when(aircraftClient.getAircraftById(500L)).thenReturn(new AircraftDto(500L, "VT-ABC", "737-800", "Boeing", 189, "ACTIVE", null));
 
@@ -179,7 +223,7 @@ class FlightServiceTest {
         aircraftRef.setId(500L);
         request.setAircraft(aircraftRef);
 
-        FlightInstanceDto result = flightService.createFlightInstance(request, "ROLE_SYSTEM_ADMIN");
+        FlightInstanceDto result = flightService.createFlightInstance(request, 999L, "ROLE_SYSTEM_ADMIN");
 
         assertEquals("VT-ABC", result.getAircraft().getRegistrationNumber());
     }

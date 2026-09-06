@@ -22,6 +22,7 @@ without re-reading the whole conversation history.
 | 13 | Role-based authorization — IDOR fix on bookings, catalog-management role gates | ✅ Done |
 | 14 | Multi-passenger bookings — Passenger/Ticket entities, seat-release compensation | ✅ Done |
 | 15 | Aircraft and Airport entities — Flight now routes by airport, FlightInstance gets an aircraft | ✅ Done |
+| 16 | Airline-ownership authorization — an owner can only manage their own airline's data | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -333,6 +334,50 @@ the aircraft lookup into one call while correctly leaving `aircraft: null` for p
 instances that never had one assigned. All test data cleaned up afterward. Full reactor `mvn test`
 confirmed `BUILD SUCCESS` with new coverage for `AirportServiceTest`, `AircraftServiceTest`, and
 updated `FlightServiceTest` cases for airport-based enrichment and aircraft assignment.
+
+## Stage 16 — Airline-ownership authorization
+
+Closed a gap named in every prior stage's "known deliberate gaps" list: `ROLE_AIRLINE_OWNER` could
+manage *any* airline's catalog data, not just their own, because `Airline` had no owner at all.
+
+**`Airline` gained `ownerId`**, supplied explicitly in the create request body (not stamped from
+the requester header, since only admins can create airlines — the admin creating one is never its
+owner). Every owner-gated `create*` method across 5 services now takes a `requesterId` alongside
+`requesterRole`, gated by a small duplicated `requireAirlineOwnership` helper (admin bypasses, owner
+must match `airline.getOwnerId()`).
+
+Two different shapes of fix depending on whether a resource already had a path to its airline:
+- **Cheap** — `Aircraft` (airline-core-service, same-service relationship) and `Flight`/
+  `FlightInstance` (flight-ops-service, already calling airline-core-service for enrichment) needed
+  no new dependency at all.
+- **Real new work** — `Fare` (pricing-service) and `SeatInstance` (seat-service) had no path to an
+  airline (only a `flightId`/`flightInstanceId`), so each gained a brand-new Feign dependency on
+  `flight-ops-service` purely to resolve ownership. `Ancillary` (ancillary-service) had no path to
+  *anything* — a flat, unscoped catalog row — so it gained a real `airlineId` field (matching the
+  original course design) plus a new Feign dependency on `airline-core-service`.
+
+These new ownership-check Feign clients deliberately have **no fallback**, same reasoning as
+`booking-service`'s `PricingClient`/`PaymentClient`: a fake "here's some airline" fallback would
+either silently let an unauthorized write through or silently block a legitimate owner. If the
+dependency is unreachable, the write now fails loudly instead of degrading.
+
+One new technique, not used anywhere else in the codebase: `pricing-service`'s `FlightClient`
+declares a narrower `FlightOwnerView` (`{id, airline}`) instead of consuming flight-ops-service's
+full `FlightDto` — relying on Spring Boot's default lenient Jackson deserialization to silently
+drop the extra JSON fields (`flightNumber`, both airports) it doesn't need. Every prior Feign client
+matched its endpoint's real response type exactly; this is the first deliberately-partial
+projection.
+
+Verified live with two separate airline owners through the real gateway, not just mocked unit
+tests: admin created "Airline A" (owned by user 12) and "Airline B" (owned by user 13); Owner A
+succeeded creating an aircraft/flight/flight-instance/fare/seat-instance/ancillary under Airline A
+but got 403 attempting the identical action under Airline B; Owner B got 403 touching any of Airline
+A's resources; admin succeeded on Airline A's resources despite not being its owner. All six
+owner-gated resource types confirmed in one pass. Full reactor `mvn test` confirmed `BUILD SUCCESS`
+with new forbidden/admin-bypass test coverage across all five affected services' test suites.
+
+**Known limitation, not fixed by this stage**: `Airline.ownerId` is admin-supplied and completely
+unvalidated — nothing checks the assigned user actually exists or holds `ROLE_AIRLINE_OWNER`.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 

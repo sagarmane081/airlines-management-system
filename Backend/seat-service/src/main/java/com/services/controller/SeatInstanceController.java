@@ -20,8 +20,9 @@ public class SeatInstanceController {
 
     @PostMapping
     public ResponseEntity<SeatInstanceDto> createSeatInstance(@RequestBody SeatInstanceDto seatInstanceDto,
+                                                               @RequestHeader("X-User-Id") Long requesterId,
                                                                @RequestHeader("X-User-Roles") String role) {
-        return new ResponseEntity<>(seatInstanceService.createSeatInstance(seatInstanceDto, role), HttpStatus.CREATED);
+        return new ResponseEntity<>(seatInstanceService.createSeatInstance(seatInstanceDto, requesterId, role), HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")

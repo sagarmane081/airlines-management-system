@@ -1,6 +1,9 @@
 package com.services.service;
 
+import com.common.dto.AirlineDto;
 import com.common.dto.FareDto;
+import com.services.client.FlightClient;
+import com.services.dto.FlightOwnerView;
 import com.services.entity.Fare;
 import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
@@ -17,17 +20,32 @@ public class FareService {
     private static final String ROLE_SYSTEM_ADMIN = "ROLE_SYSTEM_ADMIN";
 
     private final FareRepository fareRepository;
+    private final FlightClient flightClient;
 
-    public FareService(FareRepository fareRepository) {
+    public FareService(FareRepository fareRepository, FlightClient flightClient) {
         this.fareRepository = fareRepository;
+        this.flightClient = flightClient;
     }
 
-    public FareDto createFare(FareDto fareDto, String requesterRole) {
+    public FareDto createFare(FareDto fareDto, Long requesterId, String requesterRole) {
         if (!ROLE_AIRLINE_OWNER.equals(requesterRole) && !ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
             throw new ForbiddenException("Only " + ROLE_AIRLINE_OWNER + " or " + ROLE_SYSTEM_ADMIN + " can create fares");
         }
+        FlightOwnerView flight = flightClient.getFlightById(fareDto.getFlightId());
+        requireAirlineOwnership(flight.getAirline(), requesterId, requesterRole);
+
         Fare saved = fareRepository.save(FareMapper.toEntity(fareDto));
         return FareMapper.toDto(saved);
+    }
+
+    private void requireAirlineOwnership(AirlineDto airline, Long requesterId, String requesterRole) {
+        if (ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
+            return;
+        }
+        boolean isOwner = airline.getOwnerId() != null && airline.getOwnerId().equals(requesterId);
+        if (!isOwner) {
+            throw new ForbiddenException("Airline " + airline.getId() + " is not owned by the requesting user");
+        }
     }
 
     public FareDto getFareById(Long id) {

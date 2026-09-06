@@ -20,8 +20,9 @@ public class AircraftController {
 
     @PostMapping
     public ResponseEntity<AircraftDto> createAircraft(@RequestBody AircraftDto aircraftDto,
+                                                        @RequestHeader("X-User-Id") Long requesterId,
                                                         @RequestHeader("X-User-Roles") String role) {
-        return new ResponseEntity<>(aircraftService.createAircraft(aircraftDto, role), HttpStatus.CREATED);
+        return new ResponseEntity<>(aircraftService.createAircraft(aircraftDto, requesterId, role), HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")
