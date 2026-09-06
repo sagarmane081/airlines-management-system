@@ -19,6 +19,10 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
       properties:
         spring.json.trusted.packages: com.common.event
+    template:
+      observation-enabled: true
+    listener:
+      observation-enabled: true
 
 resilience4j:
   circuitbreaker:
@@ -42,6 +46,12 @@ management:
   info:
     env:
       enabled: true
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
 
 info:
   app:

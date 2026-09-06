@@ -355,6 +355,68 @@ noted below.
   `testcontainers-mysql` come from the BOM chain already imported (`spring-boot-dependencies` →
   `testcontainers-bom`) — no explicit `<version>` needed, consistent with every other dependency in
   this project.
+- **Distributed tracing (Micrometer Tracing + Zipkin) added to `api-gateway` and every service that
+  participates in either the synchronous Feign chain or the async Kafka saga** — the 9 REST business
+  services plus `notification-service` (worth doing even with no web server: Kafka trace context
+  propagation only needs Micrometer Tracing on the classpath, not a web stack, so it can complete
+  the saga trace at its final hop without contradicting its Stage 10 "no web server" design).
+  Skipped `config-server`/`service-registry` deliberately — config fetch happens once at startup,
+  before any request-scoped trace context exists, so instrumenting them traces nothing useful.
+  `management.tracing.sampling.probability: 1.0` (sample everything) lives in the shared
+  `config-repo/application.yml` — a deliberate learning-project choice, never appropriate in
+  production, where it would mean tracing overhead and storage cost scale with every single request.
+  Zipkin runs as a standalone container (`docker run -p 9411:9411 openzipkin/zipkin`), same pattern
+  as Kafka/MySQL.
+- **`spring-boot-starter-opentelemetry` and `spring-boot-starter-zipkin` must not both be added
+  together** — confirmed by reading the resolved dependency tree, not assuming. The OTel starter
+  pulls in `micrometer-tracing-bridge-otel` plus an OTLP exporter (for shipping to an OTel
+  Collector); the Zipkin starter pulls in a *different*, incompatible bridge
+  (`micrometer-tracing-bridge-brave`, Zipkin's native tracer) plus the classic Zipkin reporter. Two
+  competing Micrometer Tracing bridge implementations on the classpath at once is not a supported
+  combination. For "export traces to Zipkin," `spring-boot-starter-zipkin` alone is correct and
+  sufficient — it already brings Brave + the Zipkin reporter, exactly matching the classic
+  `management.zipkin.tracing.endpoint` property this project uses.
+- **Kafka trace propagation across service boundaries genuinely works** — confirmed by pulling the
+  full span tree for a real trace from Zipkin's API (`GET /api/v2/trace/{id}`), not just checking
+  that spans exist somewhere. `payment-service`'s `payment.completed send` (PRODUCER span) correctly
+  parents `booking-service`'s `payment.completed process` (CONSUMER span) in a *different JVM*, and
+  `booking-service`'s `booking.confirmed send` correctly fans out to **two sibling CONSUMER spans**
+  — `seat-service` and `notification-service` — both children of the same producer span, proving
+  Kafka's one-topic-many-consumer-groups fan-out preserves trace context identically to every
+  subscriber. This needed `spring.kafka.template.observation-enabled: true` and
+  `spring.kafka.listener.observation-enabled: true` explicitly — confirmed via `javap` on
+  `KafkaProperties$Template`/`$Listener` that these are real, correctly-named fields, not a guess.
+- **The transactional outbox pattern inherently breaks trace continuity across the async hop it
+  protects** — a real, non-obvious architectural interaction between two patterns built in the same
+  stage, not a bug. `OutboxRelay.relayUnpublishedEvents` is `@Scheduled`, so it has no incoming
+  request to inherit a trace context from; every poll starts a **new**, unrelated root trace. This
+  means "user confirms payment" and "seat gets marked booked" can never appear in the same trace —
+  the actual Kafka publish happens later, from a completely disconnected scheduled task, by design
+  (that's the whole point of decoupling the publish from the original request for reliability). What
+  *is* fully traceable end-to-end: the synchronous portion of one HTTP request (proven above,
+  gateway → booking-service → pricing/seat/payment via Feign), and each async hop from its own
+  outbox-relay-poll trace onward (proven above, one publish correctly fanning out to all consumers).
+  Trying to force one continuous trace across the whole saga would require manually propagating and
+  restoring trace context into the outbox row itself — real, legitimate future work, not something
+  Micrometer Tracing does automatically once an outbox sits between the request and the publish.
+- **OpenFeign does not automatically get Micrometer Tracing instrumentation just because an
+  `ObservationRegistry` bean exists** — confirmed by discovering that `pricing-service`,
+  `seat-service`, and `payment-service` were each starting a brand-new, disconnected trace when
+  called via Feign from `booking-service`, instead of continuing the caller's trace. Root cause:
+  `spring-cloud-starter-openfeign` pulls in `feign-core`/`feign-slf4j` but not `feign-micrometer` —
+  the actual artifact that instruments Feign's HTTP client to read/write trace propagation headers.
+  Confirmed via `mvn dependency:tree` before assuming. Adding `io.github.openfeign:feign-micrometer`
+  explicitly (to every service making Feign calls: `airline-core-service`, `flight-ops-service`,
+  `booking-service`; version resolved automatically via the existing BOM chain) fixed it completely
+  — re-verified with a fresh request and got a single, correctly-nested five-service trace
+  (`api-gateway` → `booking-service` → `pricing-service`/`seat-service`/`payment-service`, each
+  Feign call wrapped in its own `circuit-breaker` span from Resilience4j's own instrumentation).
+- **Fixed a real, unrelated bug found only because tracing needed a request to actually go through
+  the gateway**: `api-gateway`'s route table never had entries for `booking-service` or
+  `payment-service` — they were added in Stage 9, after the gateway's routes were written in Stage
+  5, and nobody had called either through the gateway since. Both APIs were completely unreachable
+  through the only intended public entry point until this was caught. Added the missing routes to
+  `api-gateway`'s local `application.yml`, matching the existing pattern exactly.
 
 ## Known gaps (in-progress build, not silently "fix")
 

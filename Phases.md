@@ -18,13 +18,14 @@ without re-reading the whole conversation history.
 | 9 | Kafka + the booking/payment saga (`booking-service`, `payment-service`) | ✅ Done |
 | 10 | `notification-service` — pure Kafka consumer | ✅ Done |
 | 11 | Harden — seat concurrency, real exception handling, idempotency, N+1 fixes, tests | ✅ Done |
-| 12 | Further hardening — transactional outbox ✅, Actuator/Micrometer ✅, Testcontainers ✅, distributed tracing | 🟨 In progress |
+| 12 | Further hardening — transactional outbox, Actuator/Micrometer, Testcontainers, distributed tracing | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
 
 Infra: MySQL (single container, `locationdb`, one database per service), `config-server` (8888),
-`service-registry`/Eureka (8761), Kafka (standalone container, KRaft mode, port 9092).
+`service-registry`/Eureka (8761), Kafka (standalone container, KRaft mode, port 9092), Zipkin
+(standalone container, port 9411, UI at `http://localhost:9411/zipkin/`).
 
 | Service | Port |
 |---|---|
@@ -40,9 +41,9 @@ Infra: MySQL (single container, `locationdb`, one database per service), `config
 | `payment-service` | 5010 |
 | `notification-service` | none — no web server, no REST API, just a Kafka consumer |
 
-All 8 business services registered with Eureka using their **IP address**, not hostname (see
+All 9 REST business services registered with Eureka using their **IP address**, not hostname (see
 "Eureka hostname gotcha" below) — required for `api-gateway`'s reactive load balancer to resolve
-them at all.
+them at all. `notification-service` deliberately doesn't register — nothing ever looks it up.
 
 Auth flow fully verified through the gateway: no token → 401, `/auth/login` → works without a
 token and returns a JWT, valid token → request proxied through with `X-User-Id`/`X-User-Email`/
@@ -119,8 +120,51 @@ not the bare names most tutorials still reference — using the old names fails 
 before compilation even starts. Confirmed by reading the actual `testcontainers-bom` pom rather
 than guessing.
 
-Remaining Stage 12 candidate: distributed tracing (Micrometer Tracing + OpenTelemetry), now that
-Actuator-instrumented infrastructure exists across the system to trace across.
+Distributed tracing closes out Stage 12. Micrometer Tracing + `spring-boot-starter-zipkin` added to
+`api-gateway` and every service touched by either the synchronous Feign chain or the async Kafka
+saga (the 9 REST business services plus `notification-service`, which needs no web server to
+participate in a Kafka consumer's trace span). `management.tracing.sampling.probability: 1.0`
+(trace everything) lives in the shared config — fine for a learning project, never for production.
+Zipkin runs as a standalone container, same pattern as Kafka/MySQL.
+
+Verified by pulling full span trees from Zipkin's API, not just confirming spans exist somewhere.
+Two complete, correctly-nested traces proven:
+- **The synchronous half**: one `POST /api/bookings` through the gateway produced a single trace
+  spanning `api-gateway` → `booking-service` → `pricing-service`/`seat-service`/`payment-service`
+  (each Feign call wrapped in its own `circuit-breaker` span from Resilience4j).
+- **The async half**: `payment-service`'s Kafka `PRODUCER` span for `payment.completed` correctly
+  parents `booking-service`'s `CONSUMER` span in a different JVM; `booking-service`'s
+  `booking.confirmed` publish correctly fans out to **two sibling consumer spans** —
+  `seat-service` and `notification-service` — both children of the same producer span, proving
+  Kafka's one-topic-many-consumer-groups fan-out preserves trace context identically for every
+  subscriber.
+
+Three real bugs found and fixed getting there, all by checking actual behavior/jars rather than
+assuming a framework "just handles it":
+1. `spring-boot-starter-opentelemetry` and `spring-boot-starter-zipkin` must never be combined —
+   they pull in two different, competing Micrometer Tracing bridges (OTel vs. Brave). For "export
+   to Zipkin," the Zipkin starter alone is correct and sufficient.
+2. OpenFeign doesn't get tracing instrumentation just because an `ObservationRegistry` bean exists
+   — `spring-cloud-starter-openfeign` doesn't pull in `feign-micrometer`, the artifact that actually
+   reads/writes trace headers on Feign's HTTP client. Without it, `pricing-service`, `seat-service`,
+   and `payment-service` each started a disconnected new trace instead of continuing the caller's.
+   Fixed by adding `io.github.openfeign:feign-micrometer` explicitly to every Feign-calling service.
+3. `api-gateway`'s route table never had entries for `booking-service`/`payment-service` — added in
+   Stage 9, after the gateway's routes were written in Stage 5, and nobody had called either through
+   the gateway since. Both APIs were unreachable through the only intended public entry point until
+   tracing needed a real gateway request to verify against. Fixed by adding the missing routes.
+
+One genuine, non-obvious architectural finding, not a bug: the transactional outbox inherently
+breaks trace continuity across the async hop it protects. `OutboxRelay` is `@Scheduled`, so it has
+no incoming request to inherit a trace from — every poll starts a **new** root trace. "User confirms
+payment" and "seat gets booked" can never share one trace ID; the whole point of the outbox is to
+decouple the publish from the original request, and that decoupling is exactly what breaks
+continuity. What's fully traceable: the synchronous portion of one request, and each async hop from
+its own relay-poll trace onward. A truly continuous saga-wide trace would need trace context stored
+in the outbox row itself and manually restored on relay — real future work, not something
+Micrometer Tracing does automatically once an outbox sits in the path.
+
+**Stage 12 is now fully done.**
 
 The Stage 9 saga verified end-to-end: `POST /api/bookings` (booking-service, Feign → pricing-service
 for the real price, Feign → payment-service to initiate a PENDING payment) →

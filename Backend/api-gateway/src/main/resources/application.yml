@@ -44,3 +44,11 @@ spring:
               uri: lb://flight-ops-service
               predicates:
                 - Path=/api/flights,/api/flights/**,/api/flight-instances,/api/flight-instances/**
+            - id: booking-service
+              uri: lb://booking-service
+              predicates:
+                - Path=/api/bookings,/api/bookings/**
+            - id: payment-service
+              uri: lb://payment-service
+              predicates:
+                - Path=/api/payments,/api/payments/**
