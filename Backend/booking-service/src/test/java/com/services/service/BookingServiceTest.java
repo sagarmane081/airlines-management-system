@@ -16,6 +16,7 @@ import com.services.repository.BookingRepository;
 import feign.FeignException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -138,6 +139,44 @@ class BookingServiceTest {
         assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L));
 
         verify(bookingRepository, never()).save(any());
+    }
+
+    @Test
+    void createBookingCancelsBookingAndReleasesSeatWhenPaymentInitiationFails() {
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
+            Booking b = inv.getArgument(0);
+            if (b.getId() == null) {
+                b.setId(10L);
+            }
+            return b;
+        });
+        doThrow(new RuntimeException("payment-service down")).when(paymentClient).initiatePayment(any(PaymentDto.class));
+
+        assertThrows(RuntimeException.class, () -> bookingService.createBooking(request(), 42L));
+
+        verify(seatClient, times(1)).releaseSeat(3L);
+        ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository, times(2)).save(captor.capture());
+        assertEquals(BookingStatus.CANCELLED, captor.getValue().getStatus());
+    }
+
+    @Test
+    void createBookingReleasesEverySeatWhenPaymentInitiationFailsForMultiPassengerBooking() {
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
+            Booking b = inv.getArgument(0);
+            if (b.getId() == null) {
+                b.setId(10L);
+            }
+            return b;
+        });
+        doThrow(new RuntimeException("payment-service down")).when(paymentClient).initiatePayment(any(PaymentDto.class));
+
+        assertThrows(RuntimeException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L));
+
+        verify(seatClient, times(1)).releaseSeat(3L);
+        verify(seatClient, times(1)).releaseSeat(4L);
     }
 
     @Test

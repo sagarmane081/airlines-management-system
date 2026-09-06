@@ -64,15 +64,35 @@ public class BookingService {
         booking.setAmount(fare.getPrice().multiply(BigDecimal.valueOf(passengers.size())));
         Booking saved = bookingRepository.save(booking);
 
-        PaymentDto paymentRequest = new PaymentDto();
-        paymentRequest.setBookingId(saved.getId());
-        paymentRequest.setAmount(saved.getAmount());
-        PaymentDto payment = paymentClient.initiatePayment(paymentRequest);
+        PaymentDto payment = initiatePaymentOrCancelBooking(saved);
 
         saved.setPaymentId(payment.getId());
         Booking withPayment = bookingRepository.save(saved);
 
         return BookingMapper.toDto(withPayment);
+    }
+
+    /**
+     * If payment initiation itself fails (payment-service down, etc.) after every seat was already
+     * successfully held and the booking already persisted PENDING, the booking must not be left
+     * stuck forever - releases every held seat and marks the booking CANCELLED before rethrowing.
+     * This closes the saga-compensation gap holdAllSeatsOrRollback doesn't cover: that one only
+     * handles a failure *during* the seat-holding loop, before the booking row even exists.
+     */
+    private PaymentDto initiatePaymentOrCancelBooking(Booking booking) {
+        PaymentDto paymentRequest = new PaymentDto();
+        paymentRequest.setBookingId(booking.getId());
+        paymentRequest.setAmount(booking.getAmount());
+        try {
+            return paymentClient.initiatePayment(paymentRequest);
+        } catch (RuntimeException e) {
+            for (Passenger passenger : booking.getPassengers()) {
+                releaseSeatQuietly(passenger.getSeatInstanceId());
+            }
+            booking.setStatus(BookingStatus.CANCELLED);
+            bookingRepository.save(booking);
+            throw e;
+        }
     }
 
     /**

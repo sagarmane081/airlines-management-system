@@ -415,6 +415,26 @@ noted below.
   Airline B; Owner B got 403 attempting to touch any of Airline A's resources; admin succeeded on
   Airline A's resources despite not being its owner. All six owner-gated resources confirmed in one
   pass through the real gateway.
+- **Saga compensation for payment-initiation failure closes the last named saga-compensation gap.**
+  `holdAllSeatsOrRollback` (Stage 14) only ever handled a failure *during* the seat-holding loop,
+  before the booking row exists at all. It didn't cover the very next failure point:
+  `paymentClient.initiatePayment` throwing *after* every seat was already held and the booking
+  already persisted `PENDING` — until now, that left the booking stuck `PENDING` forever with every
+  one of its seats stuck `HELD` forever, no automatic recovery. Fixed with
+  `initiatePaymentOrCancelBooking`: catches any `RuntimeException` from the payment call, releases
+  every passenger's seat via the same `releaseSeatQuietly` helper the multi-seat rollback already
+  built, flips the booking to `CANCELLED`, persists that, then rethrows — small change precisely
+  because Stage 14 had already built the one piece (`releaseSeatQuietly`) this needed to reuse.
+  Deliberately does not introduce a new exception type for this path — the existing "fail loudly on
+  a money-critical call" convention (no fallback on `PaymentClient`) already means an uncaught
+  exception here correctly surfaces as a 500, and dressing that up isn't what this fix is for.
+- **Verified live by stopping `payment-service` for real**, not just in mocked tests: attempted a
+  booking through the gateway while it was down, got a 500 (expected — failing loudly, no
+  fallback), then confirmed directly in the database that the seat was back to `AVAILABLE` (not
+  stuck `HELD`) and the booking was `CANCELLED` with `payment_id NULL` (not stuck `PENDING`).
+  Restarted `payment-service`, waited for Eureka's registry cache to catch up, and confirmed a
+  fresh booking attempt succeeded normally on the very next try — proving the fix doesn't affect
+  the happy path once the dependency recovers.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.
@@ -607,10 +627,11 @@ noted below.
   actually a real user, let alone one with `ROLE_AIRLINE_OWNER`. An admin could assign ownership to
   a nonexistent or wrongly-roled user ID with no error.
 - `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
-  fallback (deliberately — see the money-critical-calls entry above), and no compensation/rollback
-  exists if payment initiation fails after the booking row is already saved PENDING — that booking
-  is just stuck, never cancelled automatically. This is a saga-compensation gap, not a dual-write
-  hazard — the transactional outbox doesn't address it. Saga compensation is real future work.
+  fallback (deliberately — see the money-critical-calls entry above). Payment-initiation failure now
+  compensates (releases seats, cancels the booking — see the saga-compensation entry above), but
+  that compensation is still best-effort: if the `releaseSeat` call itself fails during
+  compensation, the seat is left stuck `HELD` with no retry, the same unsolved edge as the
+  multi-seat rollback's own best-effort release.
 - Test coverage is at the service layer only — controllers and Spring Data repository interfaces
   are untested (thin pass-through and framework-generated respectively, low value to cover
   directly). No test hits a real database except `SeatInstanceConcurrencyTest`, which genuinely

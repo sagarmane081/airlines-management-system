@@ -23,6 +23,7 @@ without re-reading the whole conversation history.
 | 14 | Multi-passenger bookings — Passenger/Ticket entities, seat-release compensation | ✅ Done |
 | 15 | Aircraft and Airport entities — Flight now routes by airport, FlightInstance gets an aircraft | ✅ Done |
 | 16 | Airline-ownership authorization — an owner can only manage their own airline's data | ✅ Done |
+| 17 | Saga compensation for payment-initiation failure — a booking is cancelled, not stuck, if payment can't start | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -379,6 +380,32 @@ with new forbidden/admin-bypass test coverage across all five affected services'
 **Known limitation, not fixed by this stage**: `Airline.ownerId` is admin-supplied and completely
 unvalidated — nothing checks the assigned user actually exists or holds `ROLE_AIRLINE_OWNER`.
 
+## Stage 17 — Saga compensation for payment-initiation failure
+
+Closed the last named saga-compensation gap: Stage 14's `holdAllSeatsOrRollback` only handled a
+failure *during* the seat-holding loop, before the booking row exists. It never covered the next
+failure point — `paymentClient.initiatePayment` throwing *after* every seat was already held and
+the booking already persisted `PENDING` — which used to leave both the booking and every one of its
+seats stuck forever with no automatic recovery.
+
+Small fix precisely because Stage 14 had already built the piece it needed: `initiatePayment
+OrCancelBooking` catches any failure from the payment call, releases every passenger's seat via the
+same `releaseSeatQuietly` helper the multi-seat rollback already uses, flips the booking to
+`CANCELLED`, persists that, then rethrows. No new exception type — the existing "fail loudly on a
+money-critical call" convention (no fallback on `PaymentClient`) already means this surfaces as a
+plain 500, which is correct here.
+
+Verified live by stopping `payment-service` for real: attempted a booking through the gateway while
+it was down (500, as expected), then confirmed directly in the database that the seat returned to
+`AVAILABLE` and the booking was `CANCELLED` with `payment_id NULL` rather than stuck `PENDING`.
+Restarted `payment-service`, waited for Eureka's registry cache to catch up, and confirmed a fresh
+booking succeeded normally on the next attempt. Full reactor `mvn test` confirmed `BUILD SUCCESS`
+with 2 new `BookingServiceTest` cases covering single- and multi-passenger compensation.
+
+**Known limitation, not fixed by this stage**: the compensation itself is best-effort — if the
+`releaseSeat` call fails during compensation (seat-service also down, say), that seat is left stuck
+`HELD` with no retry, the same unsolved edge the multi-seat rollback already had.
+
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
 - Test coverage is service-layer only — controllers and Spring Data repository interfaces aren't
@@ -387,13 +414,10 @@ unvalidated — nothing checks the assigned user actually exists or holds `ROLE_
 - Services are still directly reachable bypassing `api-gateway` — the trusted-header authorization
   model (Stage 13) assumes every request arrives via the gateway, but nothing enforces that at the
   network level yet.
-- A seat can still get stuck `HELD` forever if `paymentClient.initiatePayment` fails after every
-  seat in a booking was already successfully held — Stage 14 only closed the multi-seat *partial-
-  hold* compensation case, not this broader saga-compensation gap.
 - `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
-  fallback (deliberately — see `CLAUDE.md`), and no compensation/rollback exists if payment
-  initiation fails after the booking row is already saved PENDING — that booking is just stuck,
-  never cancelled automatically. Saga compensation is real future work, not covered by Stage 9.
+  fallback (deliberately — see `CLAUDE.md`). Payment-initiation failure now compensates (Stage 17 —
+  releases seats, cancels the booking), but that compensation is itself best-effort: if the
+  `releaseSeat` call fails during compensation, the seat is left stuck `HELD` with no retry.
 
 ## Hard-won lessons from this build (see `CLAUDE.md` for the full list)
 
