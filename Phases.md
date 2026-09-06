@@ -18,7 +18,7 @@ without re-reading the whole conversation history.
 | 9 | Kafka + the booking/payment saga (`booking-service`, `payment-service`) | ✅ Done |
 | 10 | `notification-service` — pure Kafka consumer | ✅ Done |
 | 11 | Harden — seat concurrency, real exception handling, idempotency, N+1 fixes, tests | ✅ Done |
-| 12 | Further hardening — transactional outbox ✅, Actuator/Micrometer ✅, Testcontainers, distributed tracing | 🟨 In progress |
+| 12 | Further hardening — transactional outbox ✅, Actuator/Micrometer ✅, Testcontainers ✅, distributed tracing | 🟨 In progress |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -105,9 +105,22 @@ ID when Kafka's up, flips to DOWN when it's stopped. First version used try-with
 default `close()` waited on an in-flight connection attempt; explicit `admin.close(Duration.
 ofSeconds(2))` in a `finally` block dropped that to ~5s.
 
-Remaining Stage 12 candidates: Testcontainers (retrofit onto `SeatInstanceConcurrencyTest`, which
-currently points at the real dev MySQL), then distributed tracing (Micrometer Tracing +
-OpenTelemetry) once there's more Actuator-instrumented infrastructure to trace across.
+Testcontainers is also done: `SeatInstanceConcurrencyTest` now races its 15 threads against a real,
+disposable MySQL spun up via `@Testcontainers`/`@Container`/`@ServiceConnection` (Spring Boot's
+modern integration — no manual `@DynamicPropertySource`), instead of the shared dev `seat_db`.
+Verified as a genuine improvement, not just a swap: a full test run left zero rows in the real dev
+database (previously needed a manual cleanup query after every run), and Testcontainers' Ryuk
+reaper removed the container automatically once the JVM exited. Re-ran the same negative control as
+the original test (revert `findByIdForUpdate` to plain `findById`) against the container and got
+the identical failure (10 of 15 threads "won") — the migration preserved the test's actual
+regression-catching power. Hit one real gotcha along the way: Testcontainers 2.x renamed its
+modules with a `testcontainers-` prefix (`testcontainers-junit-jupiter`, `testcontainers-mysql`),
+not the bare names most tutorials still reference — using the old names fails at POM-parsing,
+before compilation even starts. Confirmed by reading the actual `testcontainers-bom` pom rather
+than guessing.
+
+Remaining Stage 12 candidate: distributed tracing (Micrometer Tracing + OpenTelemetry), now that
+Actuator-instrumented infrastructure exists across the system to trace across.
 
 The Stage 9 saga verified end-to-end: `POST /api/bookings` (booking-service, Feign → pricing-service
 for the real price, Feign → payment-service to initiate a PENDING payment) →

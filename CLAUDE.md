@@ -331,6 +331,30 @@ noted below.
   ofSeconds(2))` in a `finally` block instead of try-with-resources — dropped the failure-path
   response time to ~5s. A health check that takes 30s to report unhealthy defeats the purpose of
   having one.
+- **`SeatInstanceConcurrencyTest` now runs against a real, disposable MySQL via Testcontainers**
+  instead of the shared dev database (`seat_db` on the `locationdb` container). `@Testcontainers` +
+  `@Container static MySQLContainer<?> mysql` + `@ServiceConnection` — the modern Spring Boot 3.1+
+  integration — wires the container's JDBC URL/credentials into `DataSourceAutoConfiguration`
+  automatically, no manual `@DynamicPropertySource` needed, and it takes priority over whatever
+  config-server would otherwise supply. Confirmed as a genuine improvement, not just a swap: the
+  real dev `seat_db` had zero rows touched after a full test run (previously needed a manual
+  `DELETE FROM seat_instances WHERE flight_instance_id = -1` cleanup step after every run), and the
+  container is fully removed automatically by Testcontainers' Ryuk reaper once the JVM exits — no
+  dangling containers left behind either. Re-ran the exact same negative control as before
+  (temporarily reverting `findByIdForUpdate` to plain `findById`) against the container and got the
+  identical failure (10 of 15 threads "won") — proof the migration preserved the test's actual
+  regression-catching power, not just its "builds and passes" status.
+- **Testcontainers 2.x renamed its JUnit/database modules with a `testcontainers-` prefix** —
+  `testcontainers-junit-jupiter` and `testcontainers-mysql`, not the `junit-jupiter`/`mysql`
+  artifact IDs that most tutorials, StackOverflow answers, and AI training data still reference.
+  Using the old names fails at the Maven POM-parsing stage with "version is missing" (since the
+  version, managed by the imported `testcontainers-bom`, is only registered under the new
+  artifactIds) — not a compile error, a build-can't-even-start error. Confirmed by grepping the
+  actual `testcontainers-bom-2.0.3.pom` for the real artifact names rather than guessing from
+  memory. Versions for all of `spring-boot-testcontainers`, `testcontainers-junit-jupiter`, and
+  `testcontainers-mysql` come from the BOM chain already imported (`spring-boot-dependencies` →
+  `testcontainers-bom`) — no explicit `<version>` needed, consistent with every other dependency in
+  this project.
 
 ## Known gaps (in-progress build, not silently "fix")
 
