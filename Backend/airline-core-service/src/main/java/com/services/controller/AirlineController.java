@@ -29,7 +29,10 @@ public class AirlineController {
     }
 
     @GetMapping
-    public ResponseEntity<List<AirlineDto>> getAllAirlines() {
-        return ResponseEntity.ok(airlineService.getAllAirlines());
+    public ResponseEntity<List<AirlineDto>> getAllAirlines(@RequestParam(required = false) List<Long> ids) {
+        List<AirlineDto> airlines = (ids == null || ids.isEmpty())
+                ? airlineService.getAllAirlines()
+                : airlineService.getAirlinesByIds(ids);
+        return ResponseEntity.ok(airlines);
     }
 }

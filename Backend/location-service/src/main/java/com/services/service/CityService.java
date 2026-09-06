@@ -36,4 +36,11 @@ public class CityService {
                 .map(CityMapper::toDto)
                 .toList();
     }
+
+    public List<CityDto> getCitiesByIds(List<Long> ids) {
+        return cityRepository.findAllByIdIn(ids)
+                .stream()
+                .map(CityMapper::toDto)
+                .toList();
+    }
 }

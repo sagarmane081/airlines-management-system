@@ -15,6 +15,10 @@ import com.services.repository.FlightRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 public class FlightService {
@@ -41,6 +45,36 @@ public class FlightService {
         return FlightMapper.toDto(flight, airline, departureCity, arrivalCity);
     }
 
+    /**
+     * Enriches a whole batch of flights with exactly one Feign call to airline-core-service and
+     * one to location-service, regardless of how many flights are in the list - avoids the N+1
+     * (previously up to 3 calls per row) that {@link #enrichFlight} has for a single flight.
+     */
+    private List<FlightDto> enrichFlights(List<Flight> flights) {
+        if (flights.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> airlineIds = flights.stream().map(Flight::getAirlineId).distinct().toList();
+        List<Long> cityIds = Stream.concat(
+                        flights.stream().map(Flight::getDepartureCityId),
+                        flights.stream().map(Flight::getArrivalCityId))
+                .distinct()
+                .toList();
+
+        Map<Long, AirlineDto> airlinesById = airlineClient.getAirlinesByIds(airlineIds).stream()
+                .collect(Collectors.toMap(AirlineDto::getId, Function.identity()));
+        Map<Long, CityDto> citiesById = locationClient.getCitiesByIds(cityIds).stream()
+                .collect(Collectors.toMap(CityDto::getId, Function.identity()));
+
+        return flights.stream()
+                .map(f -> FlightMapper.toDto(f,
+                        airlinesById.get(f.getAirlineId()),
+                        citiesById.get(f.getDepartureCityId()),
+                        citiesById.get(f.getArrivalCityId())))
+                .toList();
+    }
+
     public FlightDto createFlight(FlightDto flightDto) {
         Flight saved = flightRepository.save(FlightMapper.toEntity(flightDto));
         return enrichFlight(saved);
@@ -53,7 +87,7 @@ public class FlightService {
     }
 
     public List<FlightDto> getAllFlights() {
-        return flightRepository.findAll().stream().map(this::enrichFlight).toList();
+        return enrichFlights(flightRepository.findAll());
     }
 
     public FlightInstanceDto createFlightInstance(FlightInstanceDto instanceDto) {
@@ -78,8 +112,18 @@ public class FlightService {
     }
 
     public List<FlightInstanceDto> getAllFlightInstances() {
-        return flightInstanceRepository.findAll().stream()
-                .map(instance -> FlightMapper.toDto(instance, enrichFlight(instance.getFlight())))
+        List<FlightInstance> instances = flightInstanceRepository.findAll();
+
+        List<Flight> distinctFlights = instances.stream()
+                .collect(Collectors.toMap(i -> i.getFlight().getId(), FlightInstance::getFlight, (a, b) -> a))
+                .values()
+                .stream()
+                .toList();
+        Map<Long, FlightDto> flightDtoById = enrichFlights(distinctFlights).stream()
+                .collect(Collectors.toMap(FlightDto::getId, Function.identity()));
+
+        return instances.stream()
+                .map(instance -> FlightMapper.toDto(instance, flightDtoById.get(instance.getFlight().getId())))
                 .toList();
     }
 }

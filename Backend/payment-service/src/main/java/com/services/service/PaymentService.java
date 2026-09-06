@@ -40,6 +40,12 @@ public class PaymentService {
         Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found with id: " + id));
 
+        if (payment.getStatus() == PaymentStatus.SUCCESS) {
+            // Already confirmed - a duplicate call (client retry, or eventually a redelivered
+            // message) should be a no-op, not a second publish of PaymentCompletedEvent.
+            return PaymentMapper.toDto(payment);
+        }
+
         payment.setStatus(PaymentStatus.SUCCESS);
         Payment saved = paymentRepository.save(payment);
 

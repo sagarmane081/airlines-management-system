@@ -25,6 +25,12 @@ public class PaymentEventConsumer {
         Booking booking = bookingRepository.findById(event.getBookingId())
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + event.getBookingId()));
 
+        if (booking.getStatus() == BookingStatus.CONFIRMED) {
+            // Kafka is at-least-once, not exactly-once - a redelivered PaymentCompletedEvent
+            // must not republish BookingConfirmedEvent a second time.
+            return;
+        }
+
         booking.setStatus(BookingStatus.CONFIRMED);
         Booking saved = bookingRepository.save(booking);
 

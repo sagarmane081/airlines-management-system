@@ -123,6 +123,29 @@ noted below.
   not part of docker-compose — same reasoning as the MySQL container. `KAFKA_ADVERTISED_LISTENERS`
   must be `localhost:9092` (not the container's internal address), same class of fix as the Eureka
   hostname issue, since our services run on the host, not inside Docker.
+- **The saga's Kafka consumers are now idempotent against redelivery.** Kafka is at-least-once,
+  not exactly-once — a rebalance or slow offset commit can redeliver the same message. Fixed with
+  the standard idempotent-consumer pattern: check current state before acting, skip if the
+  transition already happened (`PaymentEventConsumer.onPaymentCompleted` and seat-service's
+  `BookingConfirmedEventConsumer` both return early if the entity is already in the target
+  terminal state, instead of unconditionally re-saving and republishing). `payment-service`'s
+  `confirmPayment` got the same guard so a duplicate REST call is also a no-op. This works cleanly
+  *because* every event here maps to one deterministic terminal state (PENDING→CONFIRMED,
+  AVAILABLE→BOOKED) — it would NOT be sufficient for an event with a cumulative effect (e.g. "add
+  $10 to balance"), which needs a real dedup-by-event-ID store instead. `notification-service` is a
+  known, deliberate exception: it has no database by design, so a redelivered event still produces
+  a duplicate log line — acceptable for a simulated log statement, would need a real dedup
+  mechanism if it ever sent an actual notification.
+- **Proving idempotency needed a different technique than the concurrency test** — forcing genuine
+  Kafka redelivery live (via a relaxed producer-side guard + real HTTP calls) produced logs that
+  were impossible to read reliably: Hibernate's own dirty-checking silently skips a no-op UPDATE
+  regardless of any app-level guard, and async consumer/producer logs interleave unpredictably.
+  Switched to a plain Mockito unit test per consumer (`PaymentEventConsumerTest`,
+  `BookingConfirmedEventConsumerTest`) that calls the `@KafkaListener` method directly, twice, with
+  the same event, and asserts `repository.save(...)` and `producer.publish(...)` were each invoked
+  exactly once — no Spring context, no real Kafka, deterministic. Verified as a real negative
+  control the same way as the concurrency test: temporarily removing the guard made the test fail
+  reproducibly before restoring it.
 - **Not-found and business-rule errors now map to real HTTP statuses, not bare 500s.** Every
   service that had `.orElseThrow(() -> new RuntimeException(...))` for a missing entity now throws
   a per-service `com.services.exception.ResourceNotFoundException` (`@ResponseStatus(NOT_FOUND)`) —
@@ -203,6 +226,21 @@ noted below.
   booking through with a fake price or a payment that was never actually initiated. Failing loudly
   (503 → no fallback → 500) is the correct behavior here — enrichment calls (city/airline names)
   get a placeholder fallback, financial calls do not.
+- **The N+1 Feign call pattern on list endpoints is fixed via bulk lookup endpoints, not caching.**
+  `airline-core-service.getAllAirlines` and `flight-ops-service.getAllFlights`/
+  `getAllFlightInstances` used to make one Feign call per row (up to 3 per row for flights: airline
+  + departure city + arrival city). Fixed by extending each "get all" endpoint to also accept an
+  optional `ids` query param on the SAME path (`GET /api/cities?ids=1,2,3`,
+  `GET /api/airlines?ids=1,2`) backed by a `findAllByIdIn` repository method, and having the calling
+  service collect all the *distinct* IDs it needs across the whole list, make exactly one bulk
+  Feign call, and map results back with a `Map<Long, Dto>` — regardless of how many rows are being
+  enriched. `getAllFlightInstances` needed one extra step: dedupe the underlying `Flight` entities
+  by ID first (multiple instances commonly share one flight) before batch-enriching, otherwise the
+  final `Collectors.toMap` step throws on the duplicate key. Confirmed via Hibernate's SQL log
+  showing a single `where id in (?,?,?)` per list call instead of N separate `where id=?` calls.
+  Bulk fallbacks were added to every existing Feign fallback class too (`ids.stream().map(this::
+  getXById).toList()`), reusing the single-lookup fallback rather than duplicating the placeholder
+  logic.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.
@@ -211,13 +249,14 @@ noted below.
 
 ## Known gaps (in-progress build, not silently "fix")
 
-- List endpoints that enrich via Feign (`airline-core-service.getAllAirlines`,
-  `flight-ops-service.getAllFlights`/`getAllFlightInstances`) make one Feign call per row — real
-  N+1, deferred until it's actually slow enough to matter.
-- No tests anywhere yet.
 - No backend service reads the `X-User-Id`/`X-User-Roles` headers `api-gateway` forwards — no
   role-based authorization exists, just authentication at the edge.
-- No circuit breakers yet on the real Feign calls that now exist.
+- `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
+  fallback (deliberately — see the money-critical-calls entry above), and no compensation/rollback
+  exists if payment initiation fails after the booking row is already saved PENDING — that booking
+  is just stuck, never cancelled automatically. Saga compensation is real future work.
+- Tests exist only where they were the sole reliable way to prove something (seat concurrency,
+  idempotent Kafka consumers) — the plain CRUD services still have none, by explicit decision.
 
 ## Commands
 

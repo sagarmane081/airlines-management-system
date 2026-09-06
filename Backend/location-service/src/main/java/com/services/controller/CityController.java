@@ -31,8 +31,10 @@ public class CityController {
     }
 
     @GetMapping
-    public ResponseEntity<List<CityDto>> getAllCities() {
-        List<CityDto> cities = cityService.getAllCities();
+    public ResponseEntity<List<CityDto>> getAllCities(@RequestParam(required = false) List<Long> ids) {
+        List<CityDto> cities = (ids == null || ids.isEmpty())
+                ? cityService.getAllCities()
+                : cityService.getCitiesByIds(ids);
         return ResponseEntity.ok(cities);
     }
 }

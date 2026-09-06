@@ -10,6 +10,9 @@ import com.services.repository.AirlineRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class AirlineService {
@@ -36,9 +39,27 @@ public class AirlineService {
     }
 
     public List<AirlineDto> getAllAirlines() {
-        return airlineRepository.findAll()
-                .stream()
-                .map(a -> AirlineMapper.toDto(a, locationClient.getCityById(a.getHeadquartersCityId())))
+        return enrichAirlines(airlineRepository.findAll());
+    }
+
+    public List<AirlineDto> getAirlinesByIds(List<Long> ids) {
+        return enrichAirlines(airlineRepository.findAllByIdIn(ids));
+    }
+
+    private List<AirlineDto> enrichAirlines(List<Airline> airlines) {
+        if (airlines.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> cityIds = airlines.stream()
+                .map(Airline::getHeadquartersCityId)
+                .distinct()
+                .toList();
+        Map<Long, CityDto> citiesById = locationClient.getCitiesByIds(cityIds).stream()
+                .collect(Collectors.toMap(CityDto::getId, Function.identity()));
+
+        return airlines.stream()
+                .map(a -> AirlineMapper.toDto(a, citiesById.get(a.getHeadquartersCityId())))
                 .toList();
     }
 }

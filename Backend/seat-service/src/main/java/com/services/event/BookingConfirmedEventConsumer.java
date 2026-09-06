@@ -22,6 +22,11 @@ public class BookingConfirmedEventConsumer {
         SeatInstance seatInstance = seatInstanceRepository.findById(event.getSeatInstanceId())
                 .orElseThrow(() -> new ResourceNotFoundException("SeatInstance not found with id: " + event.getSeatInstanceId()));
 
+        if (seatInstance.getStatus() == SeatStatus.BOOKED) {
+            // Redelivered BookingConfirmedEvent - already applied, skip the redundant write.
+            return;
+        }
+
         seatInstance.setStatus(SeatStatus.BOOKED);
         seatInstanceRepository.save(seatInstance);
     }

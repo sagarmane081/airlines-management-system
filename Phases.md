@@ -17,7 +17,7 @@ without re-reading the whole conversation history.
 | 8 | Circuit breakers (Resilience4j) on the real Feign calls that now exist | ✅ Done |
 | 9 | Kafka + the booking/payment saga (`booking-service`, `payment-service`) | ✅ Done |
 | 10 | `notification-service` — pure Kafka consumer | ✅ Done |
-| 11 | Harden — seat concurrency ✅, real exception handling ✅, idempotency, N+1 fixes, tests | 🟨 In progress |
+| 11 | Harden — seat concurrency ✅, real exception handling ✅, idempotency ✅, N+1 fixes ✅, tests | 🟨 In progress |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -80,7 +80,36 @@ tested a failure path directly against the service since Stage 6. Fixed by permi
 alongside `/auth/**`. Verified live: 404 across all 8 REST services' not-found cases, 401 for a bad
 password, 409 for a duplicate signup email, 201/200 for the happy path.
 
-Remaining in Stage 11: idempotency, the N+1 Feign calls, and broader test coverage.
+Idempotency is also done: Kafka is at-least-once, not exactly-once, so `PaymentEventConsumer`
+(booking-service) and `BookingConfirmedEventConsumer` (seat-service) both now check the entity's
+current status before acting and skip a no-op re-processing instead of unconditionally re-saving
+and republishing — the classic idempotent-consumer pattern. `payment-service`'s `confirmPayment`
+got the same guard for a duplicate REST call. This works because every event here maps to one
+deterministic terminal state; it's explicitly not a generic solution for events with a cumulative
+effect. `notification-service` is a known, accepted exception — no database, so a redelivered
+event still produces one duplicate log line, fine for a simulated notification.
+
+Verified via a plain Mockito unit test per consumer (`PaymentEventConsumerTest`,
+`BookingConfirmedEventConsumerTest`) — a live test forcing real Kafka redelivery turned out to be
+unreliable to read (Hibernate silently skips a no-op UPDATE regardless of any guard, muddying the
+signal), so the tests call the `@KafkaListener` method directly, twice, and assert the repository
+save and the event publish each happened exactly once. Confirmed as a real negative control:
+removing the guard made both tests fail reproducibly before restoring it.
+
+The N+1 Feign calls are also fixed: `location-service`'s and `airline-core-service`'s "get all"
+endpoints now also accept an optional `ids` query param on the same path (`GET /api/cities?ids=1,2,3`,
+`GET /api/airlines?ids=1,2`), backed by a `findAllByIdIn` repository method. `airline-core-service.
+getAllAirlines` and `flight-ops-service.getAllFlights`/`getAllFlightInstances` now collect the
+distinct IDs they need across the whole list and make exactly one bulk Feign call per dependency,
+instead of one call per row (up to 3 per row for flights). `getAllFlightInstances` needed one extra
+step — dedupe the underlying `Flight` entities by ID before batch-enriching, since many instances
+commonly share one flight. Every existing Feign fallback got a bulk variant too, reusing the
+single-lookup fallback (`ids.stream().map(this::getXById).toList()`) rather than duplicating the
+placeholder logic. Verified directly via Hibernate's SQL log: `GET /api/flights` against 3 flights
+(2 distinct airlines, 3 distinct cities) produced exactly one `where id in (?,?)` and one
+`where id in (?,?,?)` query, not the 6+ separate `where id=?` calls it used to make.
+
+Remaining in Stage 11: broader test coverage for the plain CRUD services.
 
 The Stage 9 saga verified end-to-end: `POST /api/bookings` (booking-service, Feign → pricing-service
 for the real price, Feign → payment-service to initiate a PENDING payment) →
@@ -98,10 +127,9 @@ threads are non-daemon.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
-- List endpoints doing Feign enrichment have an N+1 call pattern — deferred until it's slow enough
-  to justify a bulk endpoint.
-- Still no tests anywhere except `seat-service`'s new concurrency test — by explicit decision, not
-  an oversight.
+- Still no tests for the plain CRUD services — by explicit decision, not an oversight. Tests exist
+  only where they were the only reliable way to prove something (seat concurrency, idempotent
+  consumers).
 - No backend service reads the `X-User-Id`/`X-User-Roles` headers the gateway now forwards — no
   role-based authorization exists yet, just authentication at the edge.
 - `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
