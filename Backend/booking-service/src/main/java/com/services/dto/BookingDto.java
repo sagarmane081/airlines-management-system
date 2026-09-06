@@ -6,6 +6,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -15,7 +17,7 @@ public class BookingDto {
     private Long userId;
     private Long flightInstanceId;
     private Long fareId;
-    private Long seatInstanceId;
+    private List<PassengerDto> passengers = new ArrayList<>();
     private BigDecimal amount;
     private BookingStatus status;
     private Long paymentId;

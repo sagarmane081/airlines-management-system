@@ -11,7 +11,7 @@ public class BookingMapper {
         dto.setUserId(booking.getUserId());
         dto.setFlightInstanceId(booking.getFlightInstanceId());
         dto.setFareId(booking.getFareId());
-        dto.setSeatInstanceId(booking.getSeatInstanceId());
+        dto.setPassengers(booking.getPassengers().stream().map(PassengerMapper::toDto).toList());
         dto.setAmount(booking.getAmount());
         dto.setStatus(booking.getStatus());
         dto.setPaymentId(booking.getPaymentId());

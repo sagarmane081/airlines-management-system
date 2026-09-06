@@ -38,4 +38,9 @@ public class SeatInstanceController {
     public ResponseEntity<SeatInstanceDto> holdSeat(@PathVariable Long id) {
         return ResponseEntity.ok(seatInstanceService.holdSeat(id));
     }
+
+    @PostMapping("/{id}/release")
+    public ResponseEntity<SeatInstanceDto> releaseSeat(@PathVariable Long id) {
+        return ResponseEntity.ok(seatInstanceService.releaseSeat(id));
+    }
 }

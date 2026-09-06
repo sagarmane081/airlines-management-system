@@ -5,6 +5,7 @@ import com.services.entity.SeatInstance;
 import com.services.entity.SeatStatus;
 import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
+import com.services.exception.SeatAlreadyBookedException;
 import com.services.exception.SeatNotAvailableException;
 import com.services.repository.SeatInstanceRepository;
 import org.junit.jupiter.api.Test;
@@ -85,6 +86,37 @@ class SeatInstanceServiceTest {
         when(seatInstanceRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(seat));
 
         assertThrows(SeatNotAvailableException.class, () -> seatInstanceService.holdSeat(1L));
+        verify(seatInstanceRepository, never()).save(any());
+    }
+
+    @Test
+    void releaseSeatFlipsHeldBackToAvailable() {
+        SeatInstance seat = new SeatInstance(1L, 1L, "12A", "ECONOMY", SeatStatus.HELD);
+        when(seatInstanceRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(seat));
+        when(seatInstanceRepository.save(any(SeatInstance.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SeatInstanceDto result = seatInstanceService.releaseSeat(1L);
+
+        assertEquals(SeatStatus.AVAILABLE, result.getStatus());
+    }
+
+    @Test
+    void releaseSeatIsIdempotentWhenAlreadyAvailable() {
+        SeatInstance seat = new SeatInstance(1L, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
+        when(seatInstanceRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(seat));
+
+        SeatInstanceDto result = seatInstanceService.releaseSeat(1L);
+
+        assertEquals(SeatStatus.AVAILABLE, result.getStatus());
+        verify(seatInstanceRepository, never()).save(any());
+    }
+
+    @Test
+    void releaseSeatThrowsWhenAlreadyBooked() {
+        SeatInstance seat = new SeatInstance(1L, 1L, "12A", "ECONOMY", SeatStatus.BOOKED);
+        when(seatInstanceRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(seat));
+
+        assertThrows(SeatAlreadyBookedException.class, () -> seatInstanceService.releaseSeat(1L));
         verify(seatInstanceRepository, never()).save(any());
     }
 }

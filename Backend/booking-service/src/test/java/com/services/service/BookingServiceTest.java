@@ -6,6 +6,7 @@ import com.services.client.PaymentClient;
 import com.services.client.PricingClient;
 import com.services.client.SeatClient;
 import com.services.dto.BookingDto;
+import com.services.dto.PassengerDto;
 import com.services.entity.Booking;
 import com.services.entity.BookingStatus;
 import com.services.exception.ForbiddenException;
@@ -21,6 +22,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.cloud.client.circuitbreaker.NoFallbackAvailableException;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -45,12 +48,24 @@ class BookingServiceTest {
     @InjectMocks
     private BookingService bookingService;
 
-    private BookingDto request() {
+    private PassengerDto passenger(Long seatInstanceId) {
+        PassengerDto dto = new PassengerDto();
+        dto.setFirstName("Test");
+        dto.setLastName("Passenger");
+        dto.setSeatInstanceId(seatInstanceId);
+        return dto;
+    }
+
+    private BookingDto requestWithSeats(Long... seatInstanceIds) {
         BookingDto dto = new BookingDto();
         dto.setFlightInstanceId(1L);
         dto.setFareId(2L);
-        dto.setSeatInstanceId(3L);
+        dto.setPassengers(Arrays.stream(seatInstanceIds).map(this::passenger).toList());
         return dto;
+    }
+
+    private BookingDto request() {
+        return requestWithSeats(3L);
     }
 
     @Test
@@ -72,8 +87,57 @@ class BookingServiceTest {
         assertEquals(BookingStatus.PENDING, result.getStatus());
         assertEquals(5L, result.getPaymentId());
         assertEquals(42L, result.getUserId());
+        assertEquals(1, result.getPassengers().size());
         verify(seatClient, times(1)).holdSeat(3L);
         verify(bookingRepository, times(2)).save(any(Booking.class));
+    }
+
+    @Test
+    void createBookingMultipliesFareByPassengerCountAndHoldsEverySeat() {
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
+            Booking b = inv.getArgument(0);
+            if (b.getId() == null) {
+                b.setId(10L);
+            }
+            return b;
+        });
+        PaymentDto payment = new PaymentDto(5L, 10L, BigDecimal.valueOf(500), "PENDING");
+        when(paymentClient.initiatePayment(any(PaymentDto.class))).thenReturn(payment);
+
+        BookingDto result = bookingService.createBooking(requestWithSeats(3L, 4L), 42L);
+
+        assertEquals(BigDecimal.valueOf(500), result.getAmount());
+        assertEquals(2, result.getPassengers().size());
+        verify(seatClient, times(1)).holdSeat(3L);
+        verify(seatClient, times(1)).holdSeat(4L);
+    }
+
+    @Test
+    void createBookingReleasesAlreadyHeldSeatsWhenALaterSeatFails() {
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        doNothing().when(seatClient).holdSeat(3L);
+        doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(4L);
+
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L));
+
+        verify(seatClient, times(1)).holdSeat(3L);
+        verify(seatClient, times(1)).releaseSeat(3L);
+        verify(seatClient, never()).releaseSeat(4L);
+        verify(bookingRepository, never()).save(any());
+        verifyNoInteractions(paymentClient);
+    }
+
+    @Test
+    void createBookingStillThrowsOriginalErrorEvenIfRollbackReleaseFails() {
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        doNothing().when(seatClient).holdSeat(3L);
+        doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(4L);
+        doThrow(new RuntimeException("seat-service down")).when(seatClient).releaseSeat(3L);
+
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L));
+
+        verify(bookingRepository, never()).save(any());
     }
 
     @Test

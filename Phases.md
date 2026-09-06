@@ -20,6 +20,7 @@ without re-reading the whole conversation history.
 | 11 | Harden — seat concurrency, real exception handling, idempotency, N+1 fixes, tests | ✅ Done |
 | 12 | Further hardening — transactional outbox, Actuator/Micrometer, Testcontainers, distributed tracing | ✅ Done |
 | 13 | Role-based authorization — IDOR fix on bookings, catalog-management role gates | ✅ Done |
+| 14 | Multi-passenger bookings — Passenger/Ticket entities, seat-release compensation | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -242,6 +243,58 @@ the gateway and hits a service directly could set those headers to anything. Clo
 a network-level boundary (e.g. only the gateway's IP allowed to reach service ports) that this
 learning project hasn't built yet.
 
+## Stage 14 — Multi-passenger bookings
+
+Closed the biggest structural simplification flagged when comparing against the original course
+codebase (`Backend Original/`): a booking was one row = one seat = an anonymous traveler, with no
+captured identity and no travel document. Two new entities, both scoped to `booking-service` (not
+`common-lib` — a passenger's identity here belongs to this booking record, not a Feign contract):
+
+- **`Passenger`** — `firstName`, `lastName`, `dateOfBirth`, `gender`, `passportNumber`,
+  `nationality`, `seatInstanceId` (replaces `Booking.seatInstanceId` — the seat now belongs to the
+  passenger, not the booking). Real `@ManyToOne` back to `Booking`, `cascade = ALL,
+  orphanRemoval = true`.
+- **`Ticket`** — `ticketNumber` (deterministic: `"TKT" + zero-padded passenger id`), `status`,
+  `issuedAt`. `@OneToOne` to `Passenger`, kept separate rather than adding fields to `Passenger`
+  directly, since a ticket only exists once the booking is confirmed — issued inside
+  `PaymentEventConsumer.onPaymentCompleted`, reusing the existing idempotency guard (redelivery is
+  already a no-op there, so ticket issuance got that protection for free).
+
+`Booking.amount` changed from a flat fare price to `fare.price × passengers.size()`.
+
+**Seat-release compensation added alongside it, not deferred.** Multi-passenger bookings hold one
+seat per passenger in a loop, which makes a partial failure (passenger 3's seat already taken)
+much more likely to actually happen — and until now `seat-service` had no way to undo a hold at
+all, so passengers 1 and 2's seats would've been stuck `HELD` forever. Added
+`POST /api/seat-instances/{id}/release` (idempotent for `AVAILABLE`, refuses to touch `BOOKED` via
+a new `SeatAlreadyBookedException`), and `BookingService.holdAllSeatsOrRollback` now releases every
+seat already held for an attempt before rethrowing on failure. This closes the *multi-seat
+partial-hold* case specifically — it does **not** close the larger, pre-existing saga-compensation
+gap (a seat still gets stuck `HELD` if payment initiation itself fails after every hold already
+succeeded), which remains real future work.
+
+One real bug found only by live end-to-end testing, not by the (passing) mocked unit tests:
+changing `OutboxEvent.seatInstanceId: Long` to `seatInstanceIds: List<Long>` (needed so
+`BookingConfirmedEvent` could carry every passenger's seat) required `@ElementCollection`, which
+defaults to `FetchType.LAZY`. `OutboxRelay.relayUnpublishedEvents()` isn't itself `@Transactional`,
+so by the time `relayOne`'s own transaction opened, the entity was already detached — every relay
+attempt threw `LazyInitializationException` and silently retried forever, never actually
+succeeding. A pure Mockito test couldn't have caught this since it mocks away Hibernate entirely.
+Fixed with `@ElementCollection(fetch = FetchType.EAGER)` (correct here specifically because it's a
+handful of scalar IDs always needed with the row, not a large relationship). Restarting
+`booking-service` picked up and relayed the stuck row automatically on the next poll — a clean live
+demonstration of the outbox pattern's own retry guarantee.
+
+Verified live end-to-end through the gateway: a 2-passenger booking correctly doubled the fare
+amount, held both seats, and — after confirming payment — issued one ticket per passenger and
+flipped both seats to `BOOKED` (fixing the bug above along the way). Separately verified the
+rollback path: a booking with one available seat and one already-`BOOKED` seat returned 409, and
+the available seat was confirmed back to `AVAILABLE` rather than left stuck. All test data cleaned
+up afterward. Full reactor `mvn test` confirmed `BUILD SUCCESS` with new coverage for
+`releaseSeat` (happy path, idempotent-on-`AVAILABLE`, throws-on-`BOOKED`), the multi-seat hold/
+rollback paths in `BookingServiceTest`, and multi-seat marking in seat-service's
+`BookingConfirmedEventConsumerTest`.
+
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
 - Test coverage is service-layer only — controllers and Spring Data repository interfaces aren't
@@ -250,6 +303,9 @@ learning project hasn't built yet.
 - Services are still directly reachable bypassing `api-gateway` — the trusted-header authorization
   model (Stage 13) assumes every request arrives via the gateway, but nothing enforces that at the
   network level yet.
+- A seat can still get stuck `HELD` forever if `paymentClient.initiatePayment` fails after every
+  seat in a booking was already successfully held — Stage 14 only closed the multi-seat *partial-
+  hold* compensation case, not this broader saga-compensation gap.
 - `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
   fallback (deliberately — see `CLAUDE.md`), and no compensation/rollback exists if payment
   initiation fails after the booking row is already saved PENDING — that booking is just stuck,

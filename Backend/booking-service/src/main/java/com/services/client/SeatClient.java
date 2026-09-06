@@ -9,4 +9,7 @@ public interface SeatClient {
 
     @PostMapping("/api/seat-instances/{id}/hold")
     void holdSeat(@PathVariable("id") Long id);
+
+    @PostMapping("/api/seat-instances/{id}/release")
+    void releaseSeat(@PathVariable("id") Long id);
 }

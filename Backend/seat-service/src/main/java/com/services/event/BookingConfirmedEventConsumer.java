@@ -19,8 +19,14 @@ public class BookingConfirmedEventConsumer {
 
     @KafkaListener(topics = "booking.confirmed", groupId = "seat-service-group")
     public void onBookingConfirmed(BookingConfirmedEvent event) {
-        SeatInstance seatInstance = seatInstanceRepository.findById(event.getSeatInstanceId())
-                .orElseThrow(() -> new ResourceNotFoundException("SeatInstance not found with id: " + event.getSeatInstanceId()));
+        for (Long seatInstanceId : event.getSeatInstanceIds()) {
+            markSeatBooked(seatInstanceId);
+        }
+    }
+
+    private void markSeatBooked(Long seatInstanceId) {
+        SeatInstance seatInstance = seatInstanceRepository.findById(seatInstanceId)
+                .orElseThrow(() -> new ResourceNotFoundException("SeatInstance not found with id: " + seatInstanceId));
 
         if (seatInstance.getStatus() == SeatStatus.BOOKED) {
             // Redelivered BookingConfirmedEvent - already applied, skip the redundant write.

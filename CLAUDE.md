@@ -284,6 +284,57 @@ noted below.
   gateway; a request that skips it could set `X-User-Id`/`X-User-Roles` to anything. Closing this
   needs a network-level boundary (only the gateway's IP allowed to reach service ports), not yet
   built in this learning project.
+- **Multi-passenger bookings: `Passenger` and `Ticket` are new entities scoped to `booking-service`,
+  not `common-lib`** — a passenger's identity here belongs to this booking record, not a Feign
+  contract another service reads. `Booking.seatInstanceId: Long` became
+  `Booking.passengers: List<Passenger>` (`@OneToMany(mappedBy="booking", cascade=ALL,
+  orphanRemoval=true)` — a passenger has no lifecycle independent of its booking), and each
+  `Passenger` now carries its own `seatInstanceId` (one seat per traveler). `Ticket` is a separate
+  entity (`@OneToOne` to `Passenger`) rather than fields bolted onto `Passenger`, because a ticket
+  doesn't exist yet at booking creation - it's only issued later, asynchronously, when
+  `PaymentEventConsumer.onPaymentCompleted` flips the booking to `CONFIRMED`. Ticket numbers are
+  deterministic (`"TKT" + zero-padded passenger id`), which made the idempotency guard trivial: the
+  existing `if (booking.getStatus() == BookingStatus.CONFIRMED) return;` early-return already
+  prevents a redelivered `PaymentCompletedEvent` from issuing a second ticket, no extra guard needed.
+  `amount` changed from a flat fare price to `fare.price * passengers.size()`.
+- **Multi-seat holds need real compensation, not just clean single-seat failure.** Holding N seats
+  in a loop (one Feign call per passenger) means a failure partway through (passenger 3's seat
+  already taken) leaves passengers 1 and 2's seats stuck `HELD` - and until this work, `seat-service`
+  had no way to undo a hold at all. Added `POST /api/seat-instances/{id}/release`
+  (`SeatInstanceService.releaseSeat`, same `findByIdForUpdate` pessimistic-lock pattern as
+  `holdSeat`) - idempotent for `AVAILABLE` (safe to retry), refuses to touch `BOOKED` (throws
+  `SeatAlreadyBookedException`, 409) since releasing a booked seat would incorrectly free up
+  inventory that's part of a confirmed booking. `holdSeat` was left ungated for role checks in
+  Stage 13 precisely because it's an internal operational call, not catalog management -
+  `releaseSeat` is the same category and was left ungated for the same reason.
+  `BookingService.holdAllSeatsOrRollback` holds seats in order, and on any failure releases every
+  seat already held for that attempt before rethrowing the original exception - verified live, not
+  just in mocked tests: attempted a 2-passenger booking where seat 1 was available and seat 2 was
+  already `BOOKED`, got a 409, and confirmed seat 1 (held first) correctly flipped back to
+  `AVAILABLE` rather than staying stuck. This closes the *multi-seat partial-hold* case specifically
+  - it does **not** close the pre-existing, larger saga-compensation gap (a seat still gets stuck
+  `HELD` forever if `paymentClient.initiatePayment` itself fails after every seat hold already
+  succeeded) - that remains real future work, deliberately out of scope here.
+- **Real bug, only catchable live: `@ElementCollection` defaults to `FetchType.LAZY`, and
+  `OutboxRelay` hands `relayOne` an already-detached entity.** Changing `OutboxEvent.seatInstanceId:
+  Long` to `seatInstanceIds: List<Long>` (needed so `BookingConfirmedEvent` could carry every
+  passenger's seat, not just one) required `@ElementCollection` for the list. But
+  `OutboxRelay.relayUnpublishedEvents()` is not itself `@Transactional` - only the per-row
+  `relayOne` is - so `findByPublishedFalseOrderByCreatedAtAsc()` returns entities that are already
+  detached by the time `relayOne`'s own transaction opens. Accessing the LAZY collection inside that
+  new transaction threw `LazyInitializationException: ... no session` on every single relay attempt,
+  silently retried forever (by design - that's what the outbox pattern does with any relay failure)
+  but never actually succeeding. A pure Mockito unit test with mocked repositories couldn't have
+  caught this - `OutboxRelayTest` mocks away Hibernate entirely, so the proxy/session behavior that
+  actually broke never runs. Only found via the live end-to-end multi-passenger booking test (seats
+  stayed `HELD` instead of flipping to `BOOKED`, then grepping `booking-service`'s real log for the
+  warning `OutboxRelay` already logs on every failure). Fixed with
+  `@ElementCollection(fetch = FetchType.EAGER)` - correct here specifically because this collection
+  is a handful of scalar seat IDs always needed together with the row, not a large or optional
+  relationship; EAGER on a real `@OneToMany`/`@ManyToOne` to full entities would be the usual anti-
+  pattern. Restarting `booking-service` after the fix picked up and relayed the still-unpublished
+  row automatically on the very next poll, with no manual DB fix needed - a clean live demonstration
+  of the same retry guarantee the outbox pattern was already documented as providing.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.

@@ -5,6 +5,7 @@ import com.services.entity.SeatInstance;
 import com.services.entity.SeatStatus;
 import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
+import com.services.exception.SeatAlreadyBookedException;
 import com.services.exception.SeatNotAvailableException;
 import com.services.mapper.SeatInstanceMapper;
 import com.services.repository.SeatInstanceRepository;
@@ -54,6 +55,30 @@ public class SeatInstanceService {
         }
 
         seatInstance.setStatus(SeatStatus.HELD);
+        SeatInstance saved = seatInstanceRepository.save(seatInstance);
+        return SeatInstanceMapper.toDto(saved);
+    }
+
+    /**
+     * Compensating action for a multi-seat hold that failed partway through (e.g. booking-service
+     * held seats 1 and 2, then seat 3 was already taken) - undoes a HELD seat back to AVAILABLE.
+     * Idempotent for AVAILABLE (safe to retry), refuses to touch a BOOKED seat since that would
+     * incorrectly free up a seat that's already part of a confirmed booking.
+     */
+    @Transactional
+    public SeatInstanceDto releaseSeat(Long id) {
+        SeatInstance seatInstance = seatInstanceRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResourceNotFoundException("SeatInstance not found with id: " + id));
+
+        if (seatInstance.getStatus() == SeatStatus.BOOKED) {
+            throw new SeatAlreadyBookedException("Seat " + id + " is already booked and cannot be released");
+        }
+
+        if (seatInstance.getStatus() == SeatStatus.AVAILABLE) {
+            return SeatInstanceMapper.toDto(seatInstance);
+        }
+
+        seatInstance.setStatus(SeatStatus.AVAILABLE);
         SeatInstance saved = seatInstanceRepository.save(seatInstance);
         return SeatInstanceMapper.toDto(saved);
     }

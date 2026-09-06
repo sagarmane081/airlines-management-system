@@ -13,7 +13,7 @@ public class BookingConfirmedEventConsumer {
 
     @KafkaListener(topics = "booking.confirmed", groupId = "notification-service-group")
     public void onBookingConfirmed(BookingConfirmedEvent event) {
-        log.info("Sending booking confirmation notification: bookingId={}, flightInstanceId={}, seatInstanceId={}",
-                event.getBookingId(), event.getFlightInstanceId(), event.getSeatInstanceId());
+        log.info("Sending booking confirmation notification: bookingId={}, flightInstanceId={}, seatInstanceIds={}",
+                event.getBookingId(), event.getFlightInstanceId(), event.getSeatInstanceIds());
     }
 }

@@ -4,6 +4,8 @@ import com.common.event.PaymentCompletedEvent;
 import com.services.entity.Booking;
 import com.services.entity.BookingStatus;
 import com.services.entity.OutboxEvent;
+import com.services.entity.Passenger;
+import com.services.entity.TicketStatus;
 import com.services.repository.BookingRepository;
 import com.services.repository.OutboxEventRepository;
 import org.junit.jupiter.api.Test;
@@ -12,6 +14,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,7 +23,7 @@ import static org.mockito.Mockito.*;
 
 /**
  * Kafka is at-least-once, not exactly-once: this proves a redelivered PaymentCompletedEvent
- * does not reconfirm a booking or write a second outbox row.
+ * does not reconfirm a booking, write a second outbox row, or issue a second ticket.
  */
 @ExtendWith(MockitoExtension.class)
 class PaymentEventConsumerTest {
@@ -31,15 +34,26 @@ class PaymentEventConsumerTest {
     @Mock
     private OutboxEventRepository outboxEventRepository;
 
+    private Booking pendingBooking() {
+        Booking booking = new Booking();
+        booking.setId(1L);
+        booking.setFlightInstanceId(10L);
+        booking.setStatus(BookingStatus.PENDING);
+
+        Passenger passenger = new Passenger();
+        passenger.setId(99L);
+        passenger.setSeatInstanceId(20L);
+        passenger.setBooking(booking);
+        booking.setPassengers(List.of(passenger));
+
+        return booking;
+    }
+
     @Test
     void redeliveredEventIsANoOp() {
         PaymentEventConsumer consumer = new PaymentEventConsumer(bookingRepository, outboxEventRepository);
 
-        Booking booking = new Booking();
-        booking.setId(1L);
-        booking.setFlightInstanceId(10L);
-        booking.setSeatInstanceId(20L);
-        booking.setStatus(BookingStatus.PENDING);
+        Booking booking = pendingBooking();
 
         when(bookingRepository.findById(1L)).thenReturn(Optional.of(booking));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -50,8 +64,9 @@ class PaymentEventConsumerTest {
         consumer.onPaymentCompleted(event); // simulated redelivery of the same message
 
         assertEquals(BookingStatus.CONFIRMED, booking.getStatus());
+        assertEquals(TicketStatus.ISSUED, booking.getPassengers().get(0).getTicket().getStatus());
         verify(bookingRepository, times(1)).save(any(Booking.class));
         verify(outboxEventRepository, times(1)).save(argThat((OutboxEvent e) ->
-                e.getBookingId().equals(1L) && e.getSeatInstanceId().equals(20L) && !e.isPublished()));
+                e.getBookingId().equals(1L) && e.getSeatInstanceIds().equals(List.of(20L)) && !e.isPublished()));
     }
 }
