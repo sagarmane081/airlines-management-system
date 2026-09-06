@@ -241,6 +241,21 @@ noted below.
   Bulk fallbacks were added to every existing Feign fallback class too (`ids.stream().map(this::
   getXById).toList()`), reusing the single-lookup fallback rather than duplicating the placeholder
   logic.
+- **Broader unit test coverage added across all 9 REST services**, deliberately scoped to the
+  service layer only (not controllers or repositories), mocking every collaborator — repository,
+  Feign client, `PasswordEncoder`/`JwtUtil` for `user-service` — so every test is hermetic: no DB,
+  no Spring context, no real Kafka, runs in milliseconds. Each plain CRUD service got the same
+  shape: create (happy path), getById (happy + `ResourceNotFoundException`), getAll. Services with
+  Feign dependencies got extra coverage for what's actually novel there —
+  `AirlineServiceTest`/`FlightServiceTest` assert the bulk-lookup batching happens exactly once per
+  dependency regardless of row count (the N+1 fix, now regression-tested, not just manually
+  verified via SQL logs), `BookingServiceTest` directly exercises the `NoFallbackAvailableException`
+  unwrapping gotcha (raw `FeignException.Conflict`, wrapped-by-breaker, and an unrelated-cause case
+  that must rethrow rather than swallow), and `PaymentServiceTest` gets a dedicated test for the
+  idempotency guard that was previously only verified live. `AuthServiceTest` mocks `JwtUtil`
+  entirely rather than exercising the real one, specifically to avoid `JwtConstant`'s static
+  `JWT_SECRET` env-var read at class-load time — keeps the test runnable regardless of how or where
+  it's invoked, not dependent on `.env` being sourced first.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.
@@ -255,8 +270,10 @@ noted below.
   fallback (deliberately — see the money-critical-calls entry above), and no compensation/rollback
   exists if payment initiation fails after the booking row is already saved PENDING — that booking
   is just stuck, never cancelled automatically. Saga compensation is real future work.
-- Tests exist only where they were the sole reliable way to prove something (seat concurrency,
-  idempotent Kafka consumers) — the plain CRUD services still have none, by explicit decision.
+- Test coverage is at the service layer only — controllers and Spring Data repository interfaces
+  are untested (thin pass-through and framework-generated respectively, low value to cover
+  directly). No test hits a real database except `SeatInstanceConcurrencyTest`, which genuinely
+  needs one.
 
 ## Commands
 

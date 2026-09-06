@@ -17,7 +17,7 @@ without re-reading the whole conversation history.
 | 8 | Circuit breakers (Resilience4j) on the real Feign calls that now exist | ✅ Done |
 | 9 | Kafka + the booking/payment saga (`booking-service`, `payment-service`) | ✅ Done |
 | 10 | `notification-service` — pure Kafka consumer | ✅ Done |
-| 11 | Harden — seat concurrency ✅, real exception handling ✅, idempotency ✅, N+1 fixes ✅, tests | 🟨 In progress |
+| 11 | Harden — seat concurrency, real exception handling, idempotency, N+1 fixes, tests | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -109,7 +109,20 @@ placeholder logic. Verified directly via Hibernate's SQL log: `GET /api/flights`
 (2 distinct airlines, 3 distinct cities) produced exactly one `where id in (?,?)` and one
 `where id in (?,?,?)` query, not the 6+ separate `where id=?` calls it used to make.
 
-Remaining in Stage 11: broader test coverage for the plain CRUD services.
+Broader test coverage closes out Stage 11: all 9 REST services now have service-layer unit tests
+(38 new tests) — create/getById (happy + `ResourceNotFoundException`)/getAll for the plain CRUD
+services, plus targeted coverage for what's actually novel per service: `AirlineServiceTest` and
+`FlightServiceTest` assert the N+1 bulk-lookup batching happens exactly once regardless of row
+count (previously only checked manually via SQL logs), `BookingServiceTest` exercises the
+`NoFallbackAvailableException`-unwrapping gotcha directly (raw conflict, wrapped conflict, and an
+unrelated cause that must rethrow), and `PaymentServiceTest` gets a dedicated test for the
+idempotency guard. Every collaborator (repository, Feign client, `PasswordEncoder`/`JwtUtil`) is
+mocked, so none of these need a database, Spring context, or Kafka — milliseconds per test.
+`AuthServiceTest` mocks `JwtUtil` specifically to avoid `JwtConstant`'s env-var read at class-load
+time, so the test runs regardless of whether `JWT_SECRET` is sourced in the current shell.
+
+**Stage 11 is now fully done.** Remaining known gaps (see below) are scoped future work, not
+things left unfinished by accident.
 
 The Stage 9 saga verified end-to-end: `POST /api/bookings` (booking-service, Feign → pricing-service
 for the real price, Feign → payment-service to initiate a PENDING payment) →
@@ -127,9 +140,9 @@ threads are non-daemon.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
-- Still no tests for the plain CRUD services — by explicit decision, not an oversight. Tests exist
-  only where they were the only reliable way to prove something (seat concurrency, idempotent
-  consumers).
+- Test coverage is service-layer only — controllers and Spring Data repository interfaces aren't
+  tested directly (thin pass-through and framework-generated, respectively). No test hits a real
+  database except `SeatInstanceConcurrencyTest`, which genuinely needs one.
 - No backend service reads the `X-User-Id`/`X-User-Roles` headers the gateway now forwards — no
   role-based authorization exists yet, just authentication at the edge.
 - `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker

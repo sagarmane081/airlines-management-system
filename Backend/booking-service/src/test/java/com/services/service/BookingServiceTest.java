@@ -1,0 +1,115 @@
+package com.services.service;
+
+import com.common.dto.FareDto;
+import com.common.dto.PaymentDto;
+import com.services.client.PaymentClient;
+import com.services.client.PricingClient;
+import com.services.client.SeatClient;
+import com.services.dto.BookingDto;
+import com.services.entity.Booking;
+import com.services.entity.BookingStatus;
+import com.services.exception.ResourceNotFoundException;
+import com.services.exception.SeatUnavailableException;
+import com.services.repository.BookingRepository;
+import feign.FeignException;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.cloud.client.circuitbreaker.NoFallbackAvailableException;
+
+import java.math.BigDecimal;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class BookingServiceTest {
+
+    @Mock
+    private BookingRepository bookingRepository;
+
+    @Mock
+    private PricingClient pricingClient;
+
+    @Mock
+    private PaymentClient paymentClient;
+
+    @Mock
+    private SeatClient seatClient;
+
+    @InjectMocks
+    private BookingService bookingService;
+
+    private BookingDto request() {
+        BookingDto dto = new BookingDto();
+        dto.setFlightInstanceId(1L);
+        dto.setFareId(2L);
+        dto.setSeatInstanceId(3L);
+        return dto;
+    }
+
+    @Test
+    void createBookingUsesFarePriceAndHoldsSeatBeforeSaving() {
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
+            Booking b = inv.getArgument(0);
+            if (b.getId() == null) {
+                b.setId(10L);
+            }
+            return b;
+        });
+        PaymentDto payment = new PaymentDto(5L, 10L, BigDecimal.valueOf(250), "PENDING");
+        when(paymentClient.initiatePayment(any(PaymentDto.class))).thenReturn(payment);
+
+        BookingDto result = bookingService.createBooking(request());
+
+        assertEquals(BigDecimal.valueOf(250), result.getAmount());
+        assertEquals(BookingStatus.PENDING, result.getStatus());
+        assertEquals(5L, result.getPaymentId());
+        verify(seatClient, times(1)).holdSeat(3L);
+        verify(bookingRepository, times(2)).save(any(Booking.class));
+    }
+
+    @Test
+    void createBookingFailsCleanlyWhenSeatConflictIsRaw() {
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(3L);
+
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request()));
+        verify(bookingRepository, never()).save(any());
+        verifyNoInteractions(paymentClient);
+    }
+
+    @Test
+    void createBookingFailsCleanlyWhenSeatConflictIsWrappedByCircuitBreaker() {
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        FeignException.Conflict conflict = mock(FeignException.Conflict.class);
+        doThrow(new NoFallbackAvailableException("no fallback", conflict)).when(seatClient).holdSeat(3L);
+
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request()));
+        verify(bookingRepository, never()).save(any());
+    }
+
+    @Test
+    void createBookingRethrowsWhenNoFallbackCauseIsNotASeatConflict() {
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        NoFallbackAvailableException unrelated = new NoFallbackAvailableException("seat-service down", new RuntimeException("timeout"));
+        doThrow(unrelated).when(seatClient).holdSeat(3L);
+
+        NoFallbackAvailableException thrown = assertThrows(NoFallbackAvailableException.class,
+                () -> bookingService.createBooking(request()));
+        assertSame(unrelated, thrown);
+        verify(bookingRepository, never()).save(any());
+    }
+
+    @Test
+    void getBookingByIdThrowsWhenMissing() {
+        when(bookingRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThrows(ResourceNotFoundException.class, () -> bookingService.getBookingById(99L));
+    }
+}
