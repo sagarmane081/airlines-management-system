@@ -4,6 +4,7 @@ import com.common.dto.AirlineDto;
 import com.common.dto.CityDto;
 import com.services.client.LocationClient;
 import com.services.entity.Airline;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.AirlineMapper;
 import com.services.repository.AirlineRepository;
@@ -17,6 +18,8 @@ import java.util.stream.Collectors;
 @Service
 public class AirlineService {
 
+    private static final String ROLE_SYSTEM_ADMIN = "ROLE_SYSTEM_ADMIN";
+
     private final AirlineRepository airlineRepository;
     private final LocationClient locationClient;
 
@@ -25,7 +28,10 @@ public class AirlineService {
         this.locationClient = locationClient;
     }
 
-    public AirlineDto createAirline(AirlineDto airlineDto) {
+    public AirlineDto createAirline(AirlineDto airlineDto, String requesterRole) {
+        if (!ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
+            throw new ForbiddenException("Only " + ROLE_SYSTEM_ADMIN + " can create airlines");
+        }
         Airline saved = airlineRepository.save(AirlineMapper.toEntity(airlineDto));
         CityDto city = locationClient.getCityById(saved.getHeadquartersCityId());
         return AirlineMapper.toDto(saved, city);

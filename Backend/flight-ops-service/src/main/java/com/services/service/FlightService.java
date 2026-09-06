@@ -8,6 +8,7 @@ import com.services.dto.FlightDto;
 import com.services.dto.FlightInstanceDto;
 import com.services.entity.Flight;
 import com.services.entity.FlightInstance;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.FlightMapper;
 import com.services.repository.FlightInstanceRepository;
@@ -22,6 +23,9 @@ import java.util.stream.Stream;
 
 @Service
 public class FlightService {
+
+    private static final String ROLE_AIRLINE_OWNER = "ROLE_AIRLINE_OWNER";
+    private static final String ROLE_SYSTEM_ADMIN = "ROLE_SYSTEM_ADMIN";
 
     private final FlightRepository flightRepository;
     private final FlightInstanceRepository flightInstanceRepository;
@@ -75,7 +79,14 @@ public class FlightService {
                 .toList();
     }
 
-    public FlightDto createFlight(FlightDto flightDto) {
+    private void requireAirlineManager(String requesterRole) {
+        if (!ROLE_AIRLINE_OWNER.equals(requesterRole) && !ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
+            throw new ForbiddenException("Only " + ROLE_AIRLINE_OWNER + " or " + ROLE_SYSTEM_ADMIN + " can manage flights");
+        }
+    }
+
+    public FlightDto createFlight(FlightDto flightDto, String requesterRole) {
+        requireAirlineManager(requesterRole);
         Flight saved = flightRepository.save(FlightMapper.toEntity(flightDto));
         return enrichFlight(saved);
     }
@@ -90,7 +101,8 @@ public class FlightService {
         return enrichFlights(flightRepository.findAll());
     }
 
-    public FlightInstanceDto createFlightInstance(FlightInstanceDto instanceDto) {
+    public FlightInstanceDto createFlightInstance(FlightInstanceDto instanceDto, String requesterRole) {
+        requireAirlineManager(requesterRole);
         Long flightId = instanceDto.getFlight().getId();
         Flight flight = flightRepository.findById(flightId)
                 .orElseThrow(() -> new ResourceNotFoundException("Flight not found with id: " + flightId));

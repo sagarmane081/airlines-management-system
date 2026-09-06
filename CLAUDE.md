@@ -256,6 +256,34 @@ noted below.
   entirely rather than exercising the real one, specifically to avoid `JwtConstant`'s static
   `JWT_SECRET` env-var read at class-load time — keeps the test runnable regardless of how or where
   it's invoked, not dependent on `.env` being sourced first.
+- **Role-based authorization is a plain trusted-header check, not Spring Security method
+  annotations.** `api-gateway` already validated the JWT and forwarded `X-User-Id`/`X-User-Email`/
+  `X-User-Roles` as headers (`X-User-Roles` is a single role string, not a list — confirmed from
+  `JwtAuthenticationFilter`'s `.header("X-User-Roles", String.valueOf(claims.get("role")))`), but no
+  downstream service had ever read them until now. Each gated `create*` service method took on an
+  extra `String requesterRole` (or `Long requesterId` for booking ownership) parameter sourced from
+  a new `@RequestHeader` on the controller, with a plain `if` throwing a new per-service
+  `ForbiddenException` (`@ResponseStatus(FORBIDDEN)`, duplicated per service like every other
+  exception class — same reasoning as `ResourceNotFoundException`). Rules chosen: admin-only for
+  org-wide reference data (`location-service` cities, `airline-core-service` airlines),
+  owner-or-admin for day-to-day catalog writes (fares, ancillaries, seat instances, flights, flight
+  instances). `seat-service`'s `holdSeat` was deliberately left ungated — it's an internal Feign call
+  from `booking-service` during normal booking flow, not catalog management, and gating it would
+  have broken booking for customers.
+- **Fixed a real IDOR on `GET /api/bookings/{id}`** — it returned any booking to any authenticated
+  caller, zero ownership check. `Booking`/`BookingDto` gained a `userId` field stamped from
+  `X-User-Id` at creation (`createBooking(BookingDto, Long requesterId)`); `getBookingById(Long id,
+  Long requesterId, String requesterRole)` now throws `ForbiddenException` unless the caller owns
+  the booking or holds `ROLE_SYSTEM_ADMIN`. Verified live end-to-end through the gateway with three
+  real users (customer/owner/admin roles, real signup+login+JWT): created a booking as one customer,
+  confirmed a different customer got 403, `ROLE_SYSTEM_ADMIN` got 200 regardless of ownership, and
+  the original owner got 200 — plus confirmed the response DTO's `userId` matched the header-derived
+  requester ID, not a client-supplied value.
+- **Known limitation, not fixed by this work**: every service is still directly reachable on its own
+  port, bypassing `api-gateway`. The whole trusted-header model assumes requests arrive via the
+  gateway; a request that skips it could set `X-User-Id`/`X-User-Roles` to anything. Closing this
+  needs a network-level boundary (only the gateway's IP allowed to reach service ports), not yet
+  built in this learning project.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.
@@ -440,8 +468,13 @@ noted below.
 
 ## Known gaps (in-progress build, not silently "fix")
 
-- No backend service reads the `X-User-Id`/`X-User-Roles` headers `api-gateway` forwards — no
-  role-based authorization exists, just authentication at the edge.
+- Services are still directly reachable bypassing `api-gateway` — the trusted-header authorization
+  model (role gates + booking-ownership check) assumes every request arrives via the gateway, but
+  nothing enforces that at the network level. A request straight to a service's own port could set
+  `X-User-Id`/`X-User-Roles` to anything.
+- No backend service does deeper authorization than "does this role/user match" — e.g. no check
+  that an `ROLE_AIRLINE_OWNER` creating a fare/flight/seat actually belongs to the airline being
+  modified. Any airline owner can currently manage any airline's catalog data.
 - `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
   fallback (deliberately — see the money-critical-calls entry above), and no compensation/rollback
   exists if payment initiation fails after the booking row is already saved PENDING — that booking

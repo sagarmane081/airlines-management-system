@@ -24,6 +24,8 @@ public class Booking {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    private Long userId;
+
     private Long flightInstanceId;
 
     private Long fareId;

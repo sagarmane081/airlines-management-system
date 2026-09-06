@@ -19,8 +19,9 @@ public class SeatInstanceController {
     }
 
     @PostMapping
-    public ResponseEntity<SeatInstanceDto> createSeatInstance(@RequestBody SeatInstanceDto seatInstanceDto) {
-        return new ResponseEntity<>(seatInstanceService.createSeatInstance(seatInstanceDto), HttpStatus.CREATED);
+    public ResponseEntity<SeatInstanceDto> createSeatInstance(@RequestBody SeatInstanceDto seatInstanceDto,
+                                                               @RequestHeader("X-User-Roles") String role) {
+        return new ResponseEntity<>(seatInstanceService.createSeatInstance(seatInstanceDto, role), HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")

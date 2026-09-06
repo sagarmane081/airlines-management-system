@@ -2,6 +2,7 @@ package com.services.service;
 
 import com.common.dto.FareDto;
 import com.services.entity.Fare;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.FareMapper;
 import com.services.repository.FareRepository;
@@ -12,13 +13,19 @@ import java.util.List;
 @Service
 public class FareService {
 
+    private static final String ROLE_AIRLINE_OWNER = "ROLE_AIRLINE_OWNER";
+    private static final String ROLE_SYSTEM_ADMIN = "ROLE_SYSTEM_ADMIN";
+
     private final FareRepository fareRepository;
 
     public FareService(FareRepository fareRepository) {
         this.fareRepository = fareRepository;
     }
 
-    public FareDto createFare(FareDto fareDto) {
+    public FareDto createFare(FareDto fareDto, String requesterRole) {
+        if (!ROLE_AIRLINE_OWNER.equals(requesterRole) && !ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
+            throw new ForbiddenException("Only " + ROLE_AIRLINE_OWNER + " or " + ROLE_SYSTEM_ADMIN + " can create fares");
+        }
         Fare saved = fareRepository.save(FareMapper.toEntity(fareDto));
         return FareMapper.toDto(saved);
     }

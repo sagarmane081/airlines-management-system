@@ -4,6 +4,7 @@ import com.common.dto.AirlineDto;
 import com.common.dto.CityDto;
 import com.services.client.LocationClient;
 import com.services.entity.Airline;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.repository.AirlineRepository;
 import org.junit.jupiter.api.Test;
@@ -33,15 +34,24 @@ class AirlineServiceTest {
     private AirlineService airlineService;
 
     @Test
-    void createAirlineEnrichesWithCity() {
+    void createAirlineEnrichesWithCityForSystemAdmin() {
         Airline saved = new Airline(1L, "Air India", "AI", 5L);
         when(airlineRepository.save(any(Airline.class))).thenReturn(saved);
         when(locationClient.getCityById(5L)).thenReturn(new CityDto(5L, "Mumbai", "India", "Asia/Kolkata"));
 
         AirlineDto request = new AirlineDto(null, "Air India", "AI", new CityDto(5L, null, null, null));
-        AirlineDto result = airlineService.createAirline(request);
+        AirlineDto result = airlineService.createAirline(request, "ROLE_SYSTEM_ADMIN");
 
         assertEquals("Mumbai", result.getHeadquartersCity().getName());
+    }
+
+    @Test
+    void createAirlineThrowsForbiddenForNonAdmin() {
+        AirlineDto request = new AirlineDto(null, "Air India", "AI", new CityDto(5L, null, null, null));
+
+        assertThrows(ForbiddenException.class, () -> airlineService.createAirline(request, "ROLE_AIRLINE_OWNER"));
+        verify(airlineRepository, never()).save(any());
+        verifyNoInteractions(locationClient);
     }
 
     @Test

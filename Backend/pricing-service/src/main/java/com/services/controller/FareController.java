@@ -19,8 +19,9 @@ public class FareController {
     }
 
     @PostMapping
-    public ResponseEntity<FareDto> createFare(@RequestBody FareDto fareDto) {
-        return new ResponseEntity<>(fareService.createFare(fareDto), HttpStatus.CREATED);
+    public ResponseEntity<FareDto> createFare(@RequestBody FareDto fareDto,
+                                               @RequestHeader("X-User-Roles") String role) {
+        return new ResponseEntity<>(fareService.createFare(fareDto, role), HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")

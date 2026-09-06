@@ -2,6 +2,7 @@ package com.services.service;
 
 import com.common.dto.CityDto;
 import com.services.entity.City;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.repository.CityRepository;
 import org.junit.jupiter.api.Test;
@@ -27,15 +28,23 @@ class CityServiceTest {
     private CityService cityService;
 
     @Test
-    void createCitySavesAndReturnsDto() {
+    void createCitySavesAndReturnsDtoForSystemAdmin() {
         CityDto request = new CityDto(null, "Mumbai", "India", "Asia/Kolkata");
         City saved = new City(1L, "Mumbai", "India", "Asia/Kolkata");
         when(cityRepository.save(any(City.class))).thenReturn(saved);
 
-        CityDto result = cityService.createCity(request);
+        CityDto result = cityService.createCity(request, "ROLE_SYSTEM_ADMIN");
 
         assertEquals(1L, result.getId());
         assertEquals("Mumbai", result.getName());
+    }
+
+    @Test
+    void createCityThrowsForbiddenForNonAdmin() {
+        CityDto request = new CityDto(null, "Mumbai", "India", "Asia/Kolkata");
+
+        assertThrows(ForbiddenException.class, () -> cityService.createCity(request, "ROLE_CUSTOMER"));
+        verify(cityRepository, never()).save(any());
     }
 
     @Test

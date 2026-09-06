@@ -19,8 +19,9 @@ public class AirlineController {
     }
 
     @PostMapping
-    public ResponseEntity<AirlineDto> createAirline(@RequestBody AirlineDto airlineDto) {
-        return new ResponseEntity<>(airlineService.createAirline(airlineDto), HttpStatus.CREATED);
+    public ResponseEntity<AirlineDto> createAirline(@RequestBody AirlineDto airlineDto,
+                                                     @RequestHeader("X-User-Roles") String role) {
+        return new ResponseEntity<>(airlineService.createAirline(airlineDto, role), HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")

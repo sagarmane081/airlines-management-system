@@ -3,6 +3,7 @@ package com.services.service;
 import com.services.dto.AncillaryDto;
 import com.services.entity.Ancillary;
 import com.services.entity.AncillaryType;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.repository.AncillaryRepository;
 import org.junit.jupiter.api.Test;
@@ -29,15 +30,23 @@ class AncillaryServiceTest {
     private AncillaryService ancillaryService;
 
     @Test
-    void createAncillarySavesAndReturnsDto() {
+    void createAncillarySavesAndReturnsDtoForAirlineOwner() {
         AncillaryDto request = new AncillaryDto(null, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE);
         Ancillary saved = new Ancillary(1L, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE);
         when(ancillaryRepository.save(any(Ancillary.class))).thenReturn(saved);
 
-        AncillaryDto result = ancillaryService.createAncillary(request);
+        AncillaryDto result = ancillaryService.createAncillary(request, "ROLE_AIRLINE_OWNER");
 
         assertEquals(1L, result.getId());
         assertEquals(AncillaryType.BAGGAGE, result.getType());
+    }
+
+    @Test
+    void createAncillaryThrowsForbiddenForCustomer() {
+        AncillaryDto request = new AncillaryDto(null, "Extra bag", "20kg", BigDecimal.valueOf(30), AncillaryType.BAGGAGE);
+
+        assertThrows(ForbiddenException.class, () -> ancillaryService.createAncillary(request, "ROLE_CUSTOMER"));
+        verify(ancillaryRepository, never()).save(any());
     }
 
     @Test

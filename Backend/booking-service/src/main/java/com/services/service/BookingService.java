@@ -8,6 +8,7 @@ import com.services.client.SeatClient;
 import com.services.dto.BookingDto;
 import com.services.entity.Booking;
 import com.services.entity.BookingStatus;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.exception.SeatUnavailableException;
 import com.services.mapper.BookingMapper;
@@ -18,6 +19,8 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class BookingService {
+
+    private static final String ROLE_SYSTEM_ADMIN = "ROLE_SYSTEM_ADMIN";
 
     private final BookingRepository bookingRepository;
     private final PricingClient pricingClient;
@@ -32,7 +35,7 @@ public class BookingService {
         this.seatClient = seatClient;
     }
 
-    public BookingDto createBooking(BookingDto bookingDto) {
+    public BookingDto createBooking(BookingDto bookingDto, Long requesterId) {
         FareDto fare = pricingClient.getFareById(bookingDto.getFareId());
 
         try {
@@ -49,6 +52,7 @@ public class BookingService {
         }
 
         Booking booking = new Booking();
+        booking.setUserId(requesterId);
         booking.setFlightInstanceId(bookingDto.getFlightInstanceId());
         booking.setFareId(bookingDto.getFareId());
         booking.setSeatInstanceId(bookingDto.getSeatInstanceId());
@@ -67,9 +71,16 @@ public class BookingService {
         return BookingMapper.toDto(withPayment);
     }
 
-    public BookingDto getBookingById(Long id) {
+    public BookingDto getBookingById(Long id, Long requesterId, String requesterRole) {
         Booking booking = bookingRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + id));
+
+        boolean isOwner = booking.getUserId() != null && booking.getUserId().equals(requesterId);
+        boolean isAdmin = ROLE_SYSTEM_ADMIN.equals(requesterRole);
+        if (!isOwner && !isAdmin) {
+            throw new ForbiddenException("Booking " + id + " does not belong to the requesting user");
+        }
+
         return BookingMapper.toDto(booking);
     }
 }

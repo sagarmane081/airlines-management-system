@@ -3,6 +3,7 @@ package com.services.service;
 import com.services.dto.SeatInstanceDto;
 import com.services.entity.SeatInstance;
 import com.services.entity.SeatStatus;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.exception.SeatNotAvailableException;
 import com.services.mapper.SeatInstanceMapper;
@@ -15,13 +16,19 @@ import java.util.List;
 @Service
 public class SeatInstanceService {
 
+    private static final String ROLE_AIRLINE_OWNER = "ROLE_AIRLINE_OWNER";
+    private static final String ROLE_SYSTEM_ADMIN = "ROLE_SYSTEM_ADMIN";
+
     private final SeatInstanceRepository seatInstanceRepository;
 
     public SeatInstanceService(SeatInstanceRepository seatInstanceRepository) {
         this.seatInstanceRepository = seatInstanceRepository;
     }
 
-    public SeatInstanceDto createSeatInstance(SeatInstanceDto seatInstanceDto) {
+    public SeatInstanceDto createSeatInstance(SeatInstanceDto seatInstanceDto, String requesterRole) {
+        if (!ROLE_AIRLINE_OWNER.equals(requesterRole) && !ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
+            throw new ForbiddenException("Only " + ROLE_AIRLINE_OWNER + " or " + ROLE_SYSTEM_ADMIN + " can create seat instances");
+        }
         SeatInstance saved = seatInstanceRepository.save(SeatInstanceMapper.toEntity(seatInstanceDto));
         return SeatInstanceMapper.toDto(saved);
     }

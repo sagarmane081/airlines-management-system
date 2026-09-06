@@ -19,8 +19,9 @@ public class FlightController {
     }
 
     @PostMapping("/api/flights")
-    public ResponseEntity<FlightDto> createFlight(@RequestBody FlightDto flightDto) {
-        return new ResponseEntity<>(flightService.createFlight(flightDto), HttpStatus.CREATED);
+    public ResponseEntity<FlightDto> createFlight(@RequestBody FlightDto flightDto,
+                                                   @RequestHeader("X-User-Roles") String role) {
+        return new ResponseEntity<>(flightService.createFlight(flightDto, role), HttpStatus.CREATED);
     }
 
     @GetMapping("/api/flights/{id}")
@@ -34,8 +35,9 @@ public class FlightController {
     }
 
     @PostMapping("/api/flight-instances")
-    public ResponseEntity<FlightInstanceDto> createFlightInstance(@RequestBody FlightInstanceDto instanceDto) {
-        return new ResponseEntity<>(flightService.createFlightInstance(instanceDto), HttpStatus.CREATED);
+    public ResponseEntity<FlightInstanceDto> createFlightInstance(@RequestBody FlightInstanceDto instanceDto,
+                                                                   @RequestHeader("X-User-Roles") String role) {
+        return new ResponseEntity<>(flightService.createFlightInstance(instanceDto, role), HttpStatus.CREATED);
     }
 
     @GetMapping("/api/flight-instances/{id}")

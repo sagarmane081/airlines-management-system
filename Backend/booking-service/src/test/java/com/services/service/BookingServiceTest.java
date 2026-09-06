@@ -8,6 +8,7 @@ import com.services.client.SeatClient;
 import com.services.dto.BookingDto;
 import com.services.entity.Booking;
 import com.services.entity.BookingStatus;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.exception.SeatUnavailableException;
 import com.services.repository.BookingRepository;
@@ -53,7 +54,7 @@ class BookingServiceTest {
     }
 
     @Test
-    void createBookingUsesFarePriceAndHoldsSeatBeforeSaving() {
+    void createBookingUsesFarePriceHoldsSeatAndStampsRequesterAsOwner() {
         when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
             Booking b = inv.getArgument(0);
@@ -65,11 +66,12 @@ class BookingServiceTest {
         PaymentDto payment = new PaymentDto(5L, 10L, BigDecimal.valueOf(250), "PENDING");
         when(paymentClient.initiatePayment(any(PaymentDto.class))).thenReturn(payment);
 
-        BookingDto result = bookingService.createBooking(request());
+        BookingDto result = bookingService.createBooking(request(), 42L);
 
         assertEquals(BigDecimal.valueOf(250), result.getAmount());
         assertEquals(BookingStatus.PENDING, result.getStatus());
         assertEquals(5L, result.getPaymentId());
+        assertEquals(42L, result.getUserId());
         verify(seatClient, times(1)).holdSeat(3L);
         verify(bookingRepository, times(2)).save(any(Booking.class));
     }
@@ -79,7 +81,7 @@ class BookingServiceTest {
         when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
         doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(3L);
 
-        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request()));
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request(), 42L));
         verify(bookingRepository, never()).save(any());
         verifyNoInteractions(paymentClient);
     }
@@ -90,7 +92,7 @@ class BookingServiceTest {
         FeignException.Conflict conflict = mock(FeignException.Conflict.class);
         doThrow(new NoFallbackAvailableException("no fallback", conflict)).when(seatClient).holdSeat(3L);
 
-        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request()));
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request(), 42L));
         verify(bookingRepository, never()).save(any());
     }
 
@@ -101,7 +103,7 @@ class BookingServiceTest {
         doThrow(unrelated).when(seatClient).holdSeat(3L);
 
         NoFallbackAvailableException thrown = assertThrows(NoFallbackAvailableException.class,
-                () -> bookingService.createBooking(request()));
+                () -> bookingService.createBooking(request(), 42L));
         assertSame(unrelated, thrown);
         verify(bookingRepository, never()).save(any());
     }
@@ -110,6 +112,43 @@ class BookingServiceTest {
     void getBookingByIdThrowsWhenMissing() {
         when(bookingRepository.findById(99L)).thenReturn(Optional.empty());
 
-        assertThrows(ResourceNotFoundException.class, () -> bookingService.getBookingById(99L));
+        assertThrows(ResourceNotFoundException.class, () -> bookingService.getBookingById(99L, 42L, "ROLE_CUSTOMER"));
+    }
+
+    @Test
+    void getBookingByIdSucceedsForOwner() {
+        Booking booking = new Booking();
+        booking.setId(1L);
+        booking.setUserId(42L);
+        booking.setStatus(BookingStatus.CONFIRMED);
+        when(bookingRepository.findById(1L)).thenReturn(Optional.of(booking));
+
+        BookingDto result = bookingService.getBookingById(1L, 42L, "ROLE_CUSTOMER");
+
+        assertEquals(1L, result.getId());
+    }
+
+    @Test
+    void getBookingByIdSucceedsForSystemAdminEvenWhenNotOwner() {
+        Booking booking = new Booking();
+        booking.setId(1L);
+        booking.setUserId(42L);
+        booking.setStatus(BookingStatus.CONFIRMED);
+        when(bookingRepository.findById(1L)).thenReturn(Optional.of(booking));
+
+        BookingDto result = bookingService.getBookingById(1L, 999L, "ROLE_SYSTEM_ADMIN");
+
+        assertEquals(1L, result.getId());
+    }
+
+    @Test
+    void getBookingByIdThrowsForbiddenForNonOwnerNonAdmin() {
+        Booking booking = new Booking();
+        booking.setId(1L);
+        booking.setUserId(42L);
+        booking.setStatus(BookingStatus.CONFIRMED);
+        when(bookingRepository.findById(1L)).thenReturn(Optional.of(booking));
+
+        assertThrows(ForbiddenException.class, () -> bookingService.getBookingById(1L, 999L, "ROLE_CUSTOMER"));
     }
 }

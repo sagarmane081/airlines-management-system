@@ -12,6 +12,7 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class BookingDto {
     private Long id;
+    private Long userId;
     private Long flightInstanceId;
     private Long fareId;
     private Long seatInstanceId;

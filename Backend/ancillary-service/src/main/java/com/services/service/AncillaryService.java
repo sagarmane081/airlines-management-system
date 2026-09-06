@@ -2,6 +2,7 @@ package com.services.service;
 
 import com.services.dto.AncillaryDto;
 import com.services.entity.Ancillary;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.AncillaryMapper;
 import com.services.repository.AncillaryRepository;
@@ -12,13 +13,19 @@ import java.util.List;
 @Service
 public class AncillaryService {
 
+    private static final String ROLE_AIRLINE_OWNER = "ROLE_AIRLINE_OWNER";
+    private static final String ROLE_SYSTEM_ADMIN = "ROLE_SYSTEM_ADMIN";
+
     private final AncillaryRepository ancillaryRepository;
 
     public AncillaryService(AncillaryRepository ancillaryRepository) {
         this.ancillaryRepository = ancillaryRepository;
     }
 
-    public AncillaryDto createAncillary(AncillaryDto ancillaryDto) {
+    public AncillaryDto createAncillary(AncillaryDto ancillaryDto, String requesterRole) {
+        if (!ROLE_AIRLINE_OWNER.equals(requesterRole) && !ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
+            throw new ForbiddenException("Only " + ROLE_AIRLINE_OWNER + " or " + ROLE_SYSTEM_ADMIN + " can create ancillaries");
+        }
         Ancillary saved = ancillaryRepository.save(AncillaryMapper.toEntity(ancillaryDto));
         return AncillaryMapper.toDto(saved);
     }

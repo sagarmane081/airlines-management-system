@@ -9,6 +9,7 @@ import com.services.dto.FlightInstanceDto;
 import com.services.entity.Flight;
 import com.services.entity.FlightInstance;
 import com.services.entity.FlightInstanceStatus;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.repository.FlightInstanceRepository;
 import com.services.repository.FlightRepository;
@@ -23,6 +24,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
 
@@ -93,5 +95,41 @@ class FlightServiceTest {
         // Both instances share one flight - enrichment must happen once, not once per instance.
         verify(airlineClient, times(1)).getAirlinesByIds(anyList());
         verify(locationClient, times(1)).getCitiesByIds(anyList());
+    }
+
+    @Test
+    void createFlightSavesAndEnrichesForAirlineOwner() {
+        Flight saved = new Flight(1L, 10L, "AI101", 100L, 100L);
+        when(flightRepository.save(any(Flight.class))).thenReturn(saved);
+        when(airlineClient.getAirlineById(10L)).thenReturn(new AirlineDto(10L, "Air India", "AI", null));
+        when(locationClient.getCityById(100L)).thenReturn(new CityDto(100L, "Mumbai", "India", "Asia/Kolkata"));
+
+        FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null),
+                new CityDto(100L, null, null, null), new CityDto(100L, null, null, null));
+
+        FlightDto result = flightService.createFlight(request, "ROLE_AIRLINE_OWNER");
+
+        assertEquals("AI101", result.getFlightNumber());
+    }
+
+    @Test
+    void createFlightThrowsForbiddenForCustomer() {
+        FlightDto request = new FlightDto(null, "AI101", new AirlineDto(10L, null, null, null),
+                new CityDto(100L, null, null, null), new CityDto(100L, null, null, null));
+
+        assertThrows(ForbiddenException.class, () -> flightService.createFlight(request, "ROLE_CUSTOMER"));
+        verify(flightRepository, never()).save(any());
+        verifyNoInteractions(airlineClient, locationClient);
+    }
+
+    @Test
+    void createFlightInstanceThrowsForbiddenForCustomer() {
+        FlightDto flightRef = new FlightDto();
+        flightRef.setId(1L);
+        FlightInstanceDto request = new FlightInstanceDto();
+        request.setFlight(flightRef);
+
+        assertThrows(ForbiddenException.class, () -> flightService.createFlightInstance(request, "ROLE_CUSTOMER"));
+        verifyNoInteractions(flightRepository, flightInstanceRepository);
     }
 }

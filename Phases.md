@@ -19,6 +19,7 @@ without re-reading the whole conversation history.
 | 10 | `notification-service` — pure Kafka consumer | ✅ Done |
 | 11 | Harden — seat concurrency, real exception handling, idempotency, N+1 fixes, tests | ✅ Done |
 | 12 | Further hardening — transactional outbox, Actuator/Micrometer, Testcontainers, distributed tracing | ✅ Done |
+| 13 | Role-based authorization — IDOR fix on bookings, catalog-management role gates | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -190,13 +191,65 @@ flips the seat to BOOKED is also consumed by `notification-service`, which just 
 needs to call it or discover it. It stays alive purely because the Kafka listener container's
 threads are non-daemon.
 
+## Stage 13 — Role-based authorization
+
+Two gaps closed, both flagged as "known deliberate gaps" in every prior stage until now.
+
+**IDOR fix**: `GET /api/bookings/{id}` previously returned any booking to any authenticated caller
+— zero ownership check. `Booking`/`BookingDto` gained a `userId` field, stamped from the gateway's
+`X-User-Id` header at creation time (`createBooking(BookingDto, Long requesterId)`). `getBookingById`
+now takes the requester's ID and role and throws `ForbiddenException` (403) unless the caller is the
+booking's owner or holds `ROLE_SYSTEM_ADMIN`.
+
+**Catalog-management role gates**: seven `create*` endpoints across six services now check
+`X-User-Roles` before writing, using the existing `Role` enum from `user-service`
+(`ROLE_CUSTOMER`/`ROLE_AIRLINE_OWNER`/`ROLE_SYSTEM_ADMIN`):
+- Admin-only (org-wide reference data): `POST /api/cities` (`location-service`),
+  `POST /api/airlines` (`airline-core-service`).
+- Owner-or-admin (day-to-day catalog work): `POST /api/fares` (`pricing-service`),
+  `POST /api/ancillaries` (`ancillary-service`), `POST /api/seat-instances` (`seat-service`),
+  `POST /api/flights` and `POST /api/flight-instances` (`flight-ops-service`).
+
+`seat-service`'s `holdSeat` was deliberately left ungated — it's an internal Feign call from
+`booking-service`, not catalog management, and gating it would have broken the booking flow for
+every role including customers who are supposed to be able to book seats.
+
+Implementation follows the pattern already established for `ResourceNotFoundException`: a new
+per-service `ForbiddenException` (`@ResponseStatus(FORBIDDEN)`), duplicated across all seven
+services rather than centralized in `common-lib` (same reasoning as every other duplicated
+exception — `common-lib` is DTOs only). Each gated service method took on an extra
+`String requesterRole`/`Long requesterId` parameter sourced from a new `@RequestHeader` on the
+controller; no `@RestControllerAdvice`, no Spring Security method annotations — plain `if` checks,
+consistent with how `ResourceNotFoundException` was done in Stage 11.
+
+13 new/renamed unit tests added across `CityServiceTest`, `AirlineServiceTest`, `FareServiceTest`,
+`AncillaryServiceTest`, `SeatInstanceServiceTest`, `FlightServiceTest` (entirely new create-endpoint
+coverage — none existed before), and `BookingServiceTest` (owner-succeeds, admin-succeeds-without-
+ownership, non-owner-non-admin-forbidden). Full reactor `mvn test` confirmed BUILD SUCCESS with zero
+regressions.
+
+Verified live through the gateway with three real signed-up-and-logged-in users (one per role), not
+just unit tests: all seven create endpoints returned the exact expected status per role
+(403/201 as designed), and the booking IDOR check was confirmed end-to-end — created a booking as
+one customer, fetched it as a different customer (403), as `ROLE_SYSTEM_ADMIN` (200, ownership
+bypassed correctly), and as the original owner (200). Test users, bookings, seats, and catalog rows
+created during verification were cleaned up from the shared dev database afterward.
+
+**Known limitation, carried forward, not fixed by this stage**: every backend service is still
+directly reachable on its own port, bypassing `api-gateway` entirely. The whole authorization model
+here trusts `X-User-Id`/`X-User-Roles` headers *as forwarded by the gateway* — a request that skips
+the gateway and hits a service directly could set those headers to anything. Closing this requires
+a network-level boundary (e.g. only the gateway's IP allowed to reach service ports) that this
+learning project hasn't built yet.
+
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
 - Test coverage is service-layer only — controllers and Spring Data repository interfaces aren't
   tested directly (thin pass-through and framework-generated, respectively). No test hits a real
   database except `SeatInstanceConcurrencyTest`, which genuinely needs one.
-- No backend service reads the `X-User-Id`/`X-User-Roles` headers the gateway now forwards — no
-  role-based authorization exists yet, just authentication at the edge.
+- Services are still directly reachable bypassing `api-gateway` — the trusted-header authorization
+  model (Stage 13) assumes every request arrives via the gateway, but nothing enforces that at the
+  network level yet.
 - `booking-service`'s Feign calls to `pricing-service`/`payment-service` have no circuit-breaker
   fallback (deliberately — see `CLAUDE.md`), and no compensation/rollback exists if payment
   initiation fails after the booking row is already saved PENDING — that booking is just stuck,

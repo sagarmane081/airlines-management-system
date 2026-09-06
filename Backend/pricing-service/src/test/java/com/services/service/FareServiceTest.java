@@ -2,6 +2,7 @@ package com.services.service;
 
 import com.common.dto.FareDto;
 import com.services.entity.Fare;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.repository.FareRepository;
 import org.junit.jupiter.api.Test;
@@ -28,15 +29,23 @@ class FareServiceTest {
     private FareService fareService;
 
     @Test
-    void createFareSavesAndReturnsDto() {
+    void createFareSavesAndReturnsDtoForAirlineOwner() {
         FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
         Fare saved = new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
         when(fareRepository.save(any(Fare.class))).thenReturn(saved);
 
-        FareDto result = fareService.createFare(request);
+        FareDto result = fareService.createFare(request, "ROLE_AIRLINE_OWNER");
 
         assertEquals(1L, result.getId());
         assertEquals(BigDecimal.valueOf(250), result.getPrice());
+    }
+
+    @Test
+    void createFareThrowsForbiddenForCustomer() {
+        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+
+        assertThrows(ForbiddenException.class, () -> fareService.createFare(request, "ROLE_CUSTOMER"));
+        verify(fareRepository, never()).save(any());
     }
 
     @Test

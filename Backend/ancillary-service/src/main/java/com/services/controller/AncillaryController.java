@@ -19,8 +19,9 @@ public class AncillaryController {
     }
 
     @PostMapping
-    public ResponseEntity<AncillaryDto> createAncillary(@RequestBody AncillaryDto ancillaryDto) {
-        return new ResponseEntity<>(ancillaryService.createAncillary(ancillaryDto), HttpStatus.CREATED);
+    public ResponseEntity<AncillaryDto> createAncillary(@RequestBody AncillaryDto ancillaryDto,
+                                                         @RequestHeader("X-User-Roles") String role) {
+        return new ResponseEntity<>(ancillaryService.createAncillary(ancillaryDto, role), HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")

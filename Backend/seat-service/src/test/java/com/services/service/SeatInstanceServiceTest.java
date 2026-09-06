@@ -3,6 +3,7 @@ package com.services.service;
 import com.services.dto.SeatInstanceDto;
 import com.services.entity.SeatInstance;
 import com.services.entity.SeatStatus;
+import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.exception.SeatNotAvailableException;
 import com.services.repository.SeatInstanceRepository;
@@ -29,15 +30,23 @@ class SeatInstanceServiceTest {
     private SeatInstanceService seatInstanceService;
 
     @Test
-    void createSeatInstanceSavesAndReturnsDto() {
+    void createSeatInstanceSavesAndReturnsDtoForAirlineOwner() {
         SeatInstanceDto request = new SeatInstanceDto(null, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
         SeatInstance saved = new SeatInstance(1L, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
         when(seatInstanceRepository.save(any(SeatInstance.class))).thenReturn(saved);
 
-        SeatInstanceDto result = seatInstanceService.createSeatInstance(request);
+        SeatInstanceDto result = seatInstanceService.createSeatInstance(request, "ROLE_AIRLINE_OWNER");
 
         assertEquals(1L, result.getId());
         assertEquals(SeatStatus.AVAILABLE, result.getStatus());
+    }
+
+    @Test
+    void createSeatInstanceThrowsForbiddenForCustomer() {
+        SeatInstanceDto request = new SeatInstanceDto(null, 1L, "12A", "ECONOMY", SeatStatus.AVAILABLE);
+
+        assertThrows(ForbiddenException.class, () -> seatInstanceService.createSeatInstance(request, "ROLE_CUSTOMER"));
+        verify(seatInstanceRepository, never()).save(any());
     }
 
     @Test

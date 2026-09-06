@@ -19,8 +19,9 @@ public class CityController {
     }
 
     @PostMapping
-    public ResponseEntity<CityDto> createCity(@RequestBody CityDto cityDto) {
-        CityDto created = cityService.createCity(cityDto);
+    public ResponseEntity<CityDto> createCity(@RequestBody CityDto cityDto,
+                                               @RequestHeader("X-User-Roles") String role) {
+        CityDto created = cityService.createCity(cityDto, role);
         return new ResponseEntity<>(created, HttpStatus.CREATED);
     }
 
