@@ -723,6 +723,65 @@ afterward.
 multi-field cache key) were deliberately left out of this stage's scope, consistent with "start
 narrow" already used for FlightSchedule. Real follow-up work if ever wanted, not silently forgotten.
 
+## Stage 25 — JWT logout (third of the "smaller gaps")
+
+JWTs are stateless by design - the gateway validates purely via signature + `exp`, with no
+server-side lookup, so there was previously no way to invalidate a token before its natural 24h
+expiry. Closed that with a Redis-backed revocation blocklist, built directly on Stage 24's Redis
+work: `POST /auth/logout` (`user-service`) hashes the raw token (SHA-256) and writes
+`revoked-tokens::<hash>` into Redis with a TTL equal to the token's own remaining lifetime - the
+entry self-expires exactly when the token would have anyway, no cleanup job needed.
+`JwtAuthenticationFilter` (`api-gateway`) - already the sole real JWT-validation point in this
+system - gets one more check after signature/expiry succeed: does this hash exist in the blocklist?
+If so, 401, instead of forwarding.
+
+**Design decisions:**
+
+- **`/auth/logout` reads the raw `Authorization` header directly, not gateway-forwarded
+  `X-User-*` headers** - `/auth/**` bypasses `JwtAuthenticationFilter` entirely (same as
+  signup/login always have), so the endpoint parses and validates the token itself via the
+  existing `JwtUtil`.
+- **Reactive Redis in `api-gateway`, not blocking** - a blocking `RedisTemplate` call inside a
+  WebFlux `GlobalFilter` would stall the Netty event loop. Confirmed, by reading the actual Boot 4
+  `DataRedisReactiveAutoConfiguration` source rather than assuming, that `spring-boot-starter-data-
+  redis` alone auto-configures a `ReactiveStringRedisTemplate` bean for free once `reactor-core` is
+  on the classpath (already true for the gateway) - no separate reactive-specific starter artifact
+  needed.
+- **Token hashing (`TokenHasher`, SHA-256 → hex) is duplicated in both `user-service` and
+  `api-gateway`**, not centralized in `common-lib` - `common-lib` stays DTOs-only, same reasoning
+  already applied to Feign clients, exceptions, and ownership checks. Both copies must stay byte-
+  for-byte identical or a revoked token's hash won't match what the gateway checks.
+- **The blocklist stores a hash, not the raw token** - a Redis dump never contains a working,
+  replayable bearer token in plaintext.
+- **A new `InvalidTokenException` (401)** for a logout call with a malformed/tampered/expired
+  token, matching the existing one-exception-per-real-scenario granularity
+  (`EmailAlreadyRegisteredException`, `InvalidCredentialsException`).
+- **A missing `Authorization` header on `/auth/logout` is rejected by `@RequestHeader` itself
+  (400), before the controller method even runs** - the method's own check only needs to catch a
+  header that's *present* but not a Bearer token (401). Caught during live testing that an initial
+  defensive `authHeader == null` check was actually unreachable dead code once `@RequestHeader`'s
+  default `required = true` was accounted for, and removed it rather than leaving it in.
+
+Full reactor `mvn test` confirmed `BUILD SUCCESS`, with 2 new tests in `AuthServiceTest`: one
+asserting the Redis TTL written matches the token's remaining lifetime (mocked `Claims.
+getExpiration()`), one asserting a malformed/tampered token throws `InvalidTokenException` and
+never touches Redis at all (`verifyNoInteractions(redisTemplate)`).
+
+Verified live end-to-end through the real gateway: (1) a fresh token worked normally against a
+protected endpoint; (2) `POST /auth/logout` returned 204 and `redis-cli KEYS 'revoked-tokens::*'`
+showed the new entry, with `TTL` reporting ~86351 of the ~86400-second (24h) token lifetime
+remaining; (3) the exact same token immediately got 401 on the same protected endpoint it had just
+succeeded on; (4) logging in again issued a **new** token that worked normally - confirming
+revocation is per-token, not per-user/session; (5) logging out the same already-revoked token a
+second time still returned 204 (harmless, idempotent re-write of the same key); (6) a malformed
+`Authorization` header returned 401, a missing one returned 400. All test data cleaned from MySQL
+and Redis afterward.
+
+**Known limitation**: revocation is per-token, not per-user - there's no "log out all my
+sessions/devices" operation, since nothing currently tracks which tokens belong to which active
+sessions beyond the claims embedded in each token itself. Real future work if ever wanted, not
+attempted here.
+
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
 - Test coverage is service-layer only — controllers and Spring Data repository interfaces aren't

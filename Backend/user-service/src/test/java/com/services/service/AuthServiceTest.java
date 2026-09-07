@@ -9,14 +9,21 @@ import com.services.entity.Role;
 import com.services.entity.User;
 import com.services.exception.EmailAlreadyRegisteredException;
 import com.services.exception.InvalidCredentialsException;
+import com.services.exception.InvalidTokenException;
 import com.services.repository.UserRepository;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.time.Duration;
+import java.util.Date;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -38,6 +45,12 @@ class AuthServiceTest {
 
     @Mock
     private JwtUtil jwtUtil;
+
+    @Mock
+    private StringRedisTemplate redisTemplate;
+
+    @Mock
+    private ValueOperations<String, String> valueOperations;
 
     @InjectMocks
     private AuthService authService;
@@ -101,5 +114,26 @@ class AuthServiceTest {
         assertThrows(InvalidCredentialsException.class,
                 () -> authService.login(new LoginRequest("jane@example.com", "wrong")));
         verifyNoInteractions(jwtUtil);
+    }
+
+    @Test
+    void logoutWritesBlocklistEntryWithTtlMatchingRemainingTokenLifetime() {
+        Claims claims = mock(Claims.class);
+        when(claims.getExpiration()).thenReturn(new Date(System.currentTimeMillis() + 60_000));
+        when(jwtUtil.extractAllClaims("valid-token")).thenReturn(claims);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+
+        authService.logout("valid-token");
+
+        verify(valueOperations).set(anyString(), eq("1"), argThat((Duration d) ->
+                d.toMillis() > 55_000 && d.toMillis() <= 60_000));
+    }
+
+    @Test
+    void logoutThrowsInvalidTokenExceptionForMalformedOrTamperedToken() {
+        when(jwtUtil.extractAllClaims("bad-token")).thenThrow(new JwtException("bad signature"));
+
+        assertThrows(InvalidTokenException.class, () -> authService.logout("bad-token"));
+        verifyNoInteractions(redisTemplate);
     }
 }

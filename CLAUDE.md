@@ -851,6 +851,36 @@ noted below.
   twice via two separate GET requests) — direct proof the cache absorbed every repeat, not just
   that the endpoint kept returning correct JSON.
 
+- **JWT logout implemented as a Redis-backed revocation blocklist, built directly on the Redis
+  work above.** `POST /auth/logout` (`user-service`) hashes the raw token (SHA-256 → hex) and
+  writes `revoked-tokens::<hash>` into Redis with a TTL equal to the token's own remaining
+  lifetime — the entry self-expires exactly when the token would have anyway, no cleanup job
+  needed. `JwtAuthenticationFilter` (`api-gateway`) — already the sole real JWT-validation point —
+  checks the same key after signature/expiry validation succeeds, rejecting with 401 if present.
+- **Reactive Redis in `api-gateway`, confirmed rather than assumed** — a blocking `RedisTemplate`
+  call inside a WebFlux `GlobalFilter` would stall the Netty event loop. Read
+  `DataRedisReactiveAutoConfiguration`'s actual Boot 4 source: `spring-boot-starter-data-redis`
+  alone auto-configures a `ReactiveStringRedisTemplate` bean for free once `reactor-core` is on the
+  classpath (already true for the gateway) — no separate reactive-specific starter needed.
+- **Token hashing (`TokenHasher`, SHA-256 → hex) is duplicated in both `user-service` and
+  `api-gateway`, not centralized in `common-lib`** — same reasoning already established for Feign
+  clients, exceptions, and ownership checks: `common-lib` stays DTOs-only. Both copies must remain
+  byte-for-byte identical, or a revoked token's hash computed at logout won't match what the
+  gateway checks on the next request. The blocklist stores a hash, not the raw token, so a Redis
+  dump never contains a working, replayable bearer token in plaintext.
+- **A missing `Authorization` header on `/auth/logout` is rejected by `@RequestHeader` itself
+  (400) before the controller method runs** — an initial defensive `authHeader == null` check
+  inside the method was actually unreachable dead code once `@RequestHeader`'s default `required =
+  true` was accounted for; removed once live testing revealed the redundancy rather than left in
+  "just in case." The method's own check only needs to catch a header that's present but not a
+  Bearer token (401).
+- **Verified live, not just via the endpoint returning 204**: a fresh token worked against a
+  protected endpoint, `POST /auth/logout` returned 204 and `redis-cli KEYS 'revoked-tokens::*'`
+  showed the new entry with `TTL` reporting the correct remaining lifetime, the exact same token
+  then got 401 on the same endpoint it had just succeeded on, logging in again issued a **new**
+  token that worked normally (proving revocation is per-token, not per-user/session), and
+  re-logging-out the same already-revoked token stayed idempotent (204 again, harmless re-write).
+
 ## Known gaps (in-progress build, not silently "fix")
 
 - Services are still directly reachable bypassing `api-gateway` — the trusted-header authorization
