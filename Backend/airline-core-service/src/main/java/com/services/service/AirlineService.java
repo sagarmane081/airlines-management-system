@@ -8,6 +8,7 @@ import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.AirlineMapper;
 import com.services.repository.AirlineRepository;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -37,6 +38,10 @@ public class AirlineService {
         return AirlineMapper.toDto(saved, city);
     }
 
+    // Highest-value cache target in the whole codebase: this is the ownership-check lookup called
+    // on every create* request across 6 services. No update/delete endpoint exists for Airline yet,
+    // so no @CacheEvict is needed - if one is ever added, it MUST evict("airlines", #id).
+    @Cacheable(value = "airlines", key = "#id")
     public AirlineDto getAirlineById(Long id) {
         Airline airline = airlineRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Airline not found with id: " + id));

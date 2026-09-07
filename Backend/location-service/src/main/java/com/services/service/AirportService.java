@@ -8,6 +8,7 @@ import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.AirportMapper;
 import com.services.repository.AirportRepository;
 import com.services.repository.CityRepository;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -37,6 +38,9 @@ public class AirportService {
         return AirportMapper.toDto(saved);
     }
 
+    // No update/delete endpoint exists for Airport yet - same no-eviction-needed reasoning as
+    // CityService.getCityById.
+    @Cacheable(value = "airports", key = "#id")
     public AirportDto getAirportById(Long id) {
         Airport airport = airportRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Airport not found with id: " + id));

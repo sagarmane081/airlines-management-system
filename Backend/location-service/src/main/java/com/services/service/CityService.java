@@ -6,6 +6,7 @@ import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.CityMapper;
 import com.services.repository.CityRepository;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -30,6 +31,10 @@ public class CityService {
         return CityMapper.toDto(saved);
     }
 
+    // No update/delete endpoint exists for City yet, so a cached entry can never go stale from a
+    // write - no @CacheEvict needed. If an update endpoint is ever added, it MUST evict this key
+    // (evict("cities", #id)) or reads will keep serving the pre-update value until the TTL expires.
+    @Cacheable(value = "cities", key = "#id")
     public CityDto getCityById(Long id) {
         City city = cityRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("City not found with id: " + id));

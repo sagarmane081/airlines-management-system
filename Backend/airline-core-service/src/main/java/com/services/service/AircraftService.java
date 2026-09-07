@@ -9,6 +9,7 @@ import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.AircraftMapper;
 import com.services.repository.AircraftRepository;
 import com.services.repository.AirlineRepository;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -62,6 +63,10 @@ public class AircraftService {
         }
     }
 
+    // No update/delete endpoint exists for Aircraft yet - same no-eviction-needed reasoning as
+    // AirlineService.getAirlineById. The nested airlineService.getAirlineById call below benefits
+    // from its own cache too, so a cache hit here can skip both a DB read and the airline lookup.
+    @Cacheable(value = "aircraft", key = "#id")
     public AircraftDto getAircraftById(Long id) {
         Aircraft aircraft = aircraftRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Aircraft not found with id: " + id));

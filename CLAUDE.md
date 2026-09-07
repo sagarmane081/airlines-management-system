@@ -801,6 +801,56 @@ noted below.
   `/api/flights/search?...` and `/api/flights/10` through the real gateway in the same session and
   getting the correct handler for each, not inferred from documentation alone.
 
+- **Redis caching added in front of the four hottest single-id reference-data lookups**
+  (`CityService.getCityById`, `AirportService.getAirportById`, `AirlineService.getAirlineById`,
+  `AircraftService.getAircraftById`) via plain declarative `@Cacheable(value = "<name>", key =
+  "#id")` — no code touches Redis directly. `AirlineService.getAirlineById` is the single hottest
+  path in the codebase: called on every `create*` request across 6 services purely for the
+  ownership check, on data that almost never changes. Redis runs as one standalone container
+  (`docker run -d --name redis -p 6379:6379 redis`), same pattern as MySQL/Kafka/Zipkin/MailHog.
+- **Spring Boot 4's autoconfiguration module split also applies to caching, not just Kafka/Security/
+  Health** — confirmed by inspecting the jar before assuming: `CacheAutoConfiguration` moved from
+  `org.springframework.boot.autoconfigure.cache` into a dedicated `spring-boot-cache` module
+  (`org.springframework.boot.cache.autoconfigure`). `spring-boot-starter-cache` +
+  `spring-boot-starter-data-redis` are the correct starters, both resolving off the existing BOM
+  chain with no explicit version needed.
+- **`spring.cache.type: redis` and the Redis connection settings live in the shared
+  `config-repo/application.yml`, safely, even though most services never use caching at all** —
+  verified by reading `CacheAutoConfiguration`'s actual source rather than assuming: the whole
+  class is gated behind `@ConditionalOnBean(CacheAspectSupport.class)`, a bean that only exists
+  once `@EnableCaching` creates it. The shared setting is therefore completely inert for every
+  service without `@EnableCaching` — the same reasoning that already justifies Kafka's
+  `bootstrap-servers` living in the same shared file despite most services never touching Kafka.
+- **Cache values are serialized as JSON (`GenericJackson2JsonRedisSerializer`), not JDK default** —
+  configured via a small per-service `CacheConfig` bean supplying a `RedisCacheConfiguration`,
+  which Spring Boot's Redis cache auto-configuration picks up automatically in place of its own
+  default. Confirmed live via `redis-cli GET`: a cached `AirlineDto` reads back as plain, readable
+  JSON (with an `@class` type marker for polymorphic deserialization), not opaque binary — and
+  needed zero changes to the existing Lombok DTOs, since JDK serialization's `Serializable`
+  requirement never applies here.
+- **Only single-id lookups are cached, deliberately not the bulk `getXByIds` endpoints** — those
+  already collapse to one `WHERE id IN (...)` query per call; mixing partial-cache-hits with a
+  batched DB fetch would be real added complexity relative to what bulk endpoints already do
+  efficiently. A proportionate-scope decision, not an oversight.
+- **No `@CacheEvict` anywhere in this stage, and that's deliberate, not a gap** — none of the four
+  newly-cached services (`City`, `Airport`, `Airline`, `Aircraft`) has an update or delete endpoint
+  yet, so a cached entry can never actually go stale from a write today; adding eviction to
+  `create*` would be dead code; since a brand-new row's id was never in the cache to begin with.
+  Each `@Cacheable` method carries a comment flagging this precisely: the moment an update endpoint
+  is added for any of these four entities, it **must** evict the corresponding cache key, or reads
+  will silently serve the pre-update value until the 10-minute TTL backstop expires. That TTL exists
+  specifically as insurance against a missed eviction path, not as the primary staleness guard.
+- **Verified live, not just via the annotation being present**: created a real city/airline/aircraft
+  through the gateway, then confirmed three independent signals lined up. `redis-cli KEYS *` showed
+  both `cities::<id>` and `airlines::<id>` populated after a single `GET /api/airlines/{id}` call —
+  proving the cascading benefit works, since `AirlineService.getAirlineById` internally calls the
+  now-cached `LocationClient.getCityById`. `redis-cli GET`/`TTL` confirmed the JSON shape and the
+  configured TTL. Most importantly, grepping `airline-core-service`'s and `location-service`'s own
+  Hibernate SQL logs across the whole session showed each `select ... where id=?` firing **exactly
+  once**, despite the same city/airline being fetched three separate times (once during creation,
+  twice via two separate GET requests) — direct proof the cache absorbed every repeat, not just
+  that the endpoint kept returning correct JSON.
+
 ## Known gaps (in-progress build, not silently "fix")
 
 - Services are still directly reachable bypassing `api-gateway` — the trusted-header authorization

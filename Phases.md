@@ -653,6 +653,76 @@ availability check (a search result can point to a flight instance with zero sea
 only discovered at booking time). Real future work, not attempted here - this stage closes the
 "can't search at all" gap, not the "search is as smart as a real GDS" gap.
 
+## Stage 24 — Redis caching (second of the "smaller gaps")
+
+The highest-traffic reads in this codebase are single-entity lookups of reference data that almost
+never changes: `airline-core-service.getAirlineById` (called on *every* `create*` request across 6
+services purely to run the ownership check) and `location-service.getCityById`/`getAirportById`
+(called on nearly every enrichment path). Every one of those repeat requests hit the real database,
+even though the underlying row is effectively static. Added Redis as a shared cache in front of
+these four single-id lookups: `CityService.getCityById`, `AirportService.getAirportById`,
+`AirlineService.getAirlineById`, `AircraftService.getAircraftById` - all via a plain declarative
+`@Cacheable(value = "<name>", key = "#id")`, no code touches Redis directly.
+
+**Design decisions:**
+
+- **Redis runs as one standalone container** (`docker run -d --name redis -p 6379:6379 redis`),
+  same pattern as MySQL/Kafka/Zipkin/MailHog - not one per service.
+- **Confirmed the Spring Boot 4 module split applies to caching too**, before assuming anything:
+  `CacheAutoConfiguration` moved from `org.springframework.boot.autoconfigure.cache` to a dedicated
+  `spring-boot-cache` module (`org.springframework.boot.cache.autoconfigure`), same pattern already
+  hit with Kafka, Security, and the Health API. `spring-boot-starter-cache` +
+  `spring-boot-starter-data-redis` are the correct starters, and both resolve cleanly off the
+  existing BOM chain with no explicit version.
+- **`spring.cache.type: redis` and the Redis connection settings live in the shared
+  `config-repo/application.yml`**, not per-service - verified this is safe by reading
+  `CacheAutoConfiguration`'s real source rather than assuming: the whole class is gated behind
+  `@ConditionalOnBean(CacheAspectSupport.class)`, which only exists once `@EnableCaching` creates it.
+  So the shared setting is completely inert for every service that doesn't have `@EnableCaching` -
+  same reasoning already established for Kafka's `bootstrap-servers` sitting in the same shared file
+  even though most services never produce or consume anything.
+- **Cache values are JSON, not JDK serialization** - a per-service `CacheConfig` bean supplies a
+  `RedisCacheConfiguration` using `GenericJackson2JsonRedisSerializer`, which Spring Boot's own
+  Redis cache auto-configuration picks up automatically in place of its default. Confirmed live: a
+  cached `AirlineDto` reads back as plain, human-readable JSON via `redis-cli GET`, not opaque
+  binary, and needed zero changes to the existing Lombok DTOs (no `Serializable` required).
+- **Only single-id lookups are cached, deliberately not the bulk `getXByIds` endpoints** - those
+  already collapse to one `WHERE id IN (...)` query per call, and mixing partial-cache-hits with a
+  batched DB fetch would be real added complexity for what these bulk endpoints already do
+  efficiently. A proportionate-scope call, not an oversight.
+- **No `@CacheEvict` anywhere, and this is deliberate, not a gap** - none of the four cached
+  services has an update or delete endpoint yet, so a cached entry can never actually go stale from
+  a write today. Adding eviction annotations to `create*` methods would be dead code (a brand-new
+  row's id was never in the cache to evict). Each `@Cacheable` method carries a comment flagging
+  this explicitly: the moment an update endpoint is added for City/Airport/Airline/Aircraft, it
+  *must* evict the corresponding key or reads will silently serve the pre-update value until the
+  10-minute TTL backstop expires. That TTL exists precisely as a backstop for this scenario, not as
+  the primary staleness guard.
+
+Full reactor `mvn test` confirmed `BUILD SUCCESS` with zero test changes needed - `@Cacheable` is a
+Spring AOP proxy concern, invisible to the existing Mockito unit tests that construct each service
+directly via `new XService(...)`, bypassing the proxy entirely.
+
+Verified live through the gateway, not just via the annotation being present: created a real city,
+airline, and aircraft, then watched three things line up. (1) `redis-cli KEYS *` showed `cities::11`
+and `airlines::11` populated after a single `GET /api/airlines/{id}` call - confirming the cascading
+benefit reasoned about in design actually happens, since `AirlineService.getAirlineById` internally
+calls the now-cached `LocationClient.getCityById`. (2) `redis-cli GET airlines::11` returned
+readable JSON with the expected `@class` type marker, and `TTL` showed ~595 of the configured 600
+seconds remaining. (3) Grepped `airline-core-service`'s and `location-service`'s own Hibernate SQL
+logs across the whole session - `select ... from airlines where id=?` and
+`select ... from cities where id=?` each appear **exactly once**, despite the city and airline being
+fetched three separate times (once during airline creation, twice via two separate `getAirlineById`
+GET requests) - direct proof the cache absorbed every repeat, not just that the endpoint returned
+the right JSON. Repeated the same GET-twice-check for `AircraftService.getAircraftById`
+(`aircraft::4` appeared in Redis after one call). All test data cleaned from MySQL and Redis
+afterward.
+
+**Known limitation**: caching is scoped to these four single-id lookups only - `pricing-service`
+(fares change more often, different invalidation shape) and flight search results (would need a
+multi-field cache key) were deliberately left out of this stage's scope, consistent with "start
+narrow" already used for FlightSchedule. Real follow-up work if ever wanted, not silently forgotten.
+
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
 - Test coverage is service-layer only — controllers and Spring Data repository interfaces aren't
