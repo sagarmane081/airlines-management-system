@@ -31,20 +31,10 @@ public class AncillaryService {
             throw new ForbiddenException("Only " + ROLE_AIRLINE_OWNER + " or " + ROLE_SYSTEM_ADMIN + " can create ancillaries");
         }
         AirlineDto airline = airlineClient.getAirlineById(ancillaryDto.getAirlineId());
-        requireAirlineOwnership(airline, requesterId, requesterRole);
+        AirlineOwnershipChecker.requireAirlineOwnership(airline, requesterId, requesterRole);
 
         Ancillary saved = ancillaryRepository.save(AncillaryMapper.toEntity(ancillaryDto));
         return AncillaryMapper.toDto(saved);
-    }
-
-    private void requireAirlineOwnership(AirlineDto airline, Long requesterId, String requesterRole) {
-        if (ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
-            return;
-        }
-        boolean isOwner = airline.getOwnerId() != null && airline.getOwnerId().equals(requesterId);
-        if (!isOwner) {
-            throw new ForbiddenException("Airline " + airline.getId() + " is not owned by the requesting user");
-        }
     }
 
     public AncillaryDto getAncillaryById(Long id) {

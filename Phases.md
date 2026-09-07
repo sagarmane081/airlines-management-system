@@ -28,6 +28,7 @@ without re-reading the whole conversation history.
 | 19 | FareRules + BaggagePolicy — first of the structural/domain-gap arc closing the course-code comparison | ✅ Done |
 | 20 | SeatMap + CabinClass + Seat — second of the arc; SeatInstance now backed by a real seat catalog | ✅ Done |
 | 21 | FlightSchedule — third of the arc; recurring patterns that materialize real FlightInstances | ✅ Done |
+| 22 | Richer ancillary domain — fourth and final piece of the arc; Meal/FlightAncillary/FlightMeal give per-flight pricing | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -554,6 +555,43 @@ the calendar, since Jan 1 2026 is a Thursday), confirmed each carries the right 
 back-reference, and re-ran generation to confirm it returned empty rather than duplicating. Full
 reactor `mvn test` confirmed `BUILD SUCCESS`, with 7 new tests in `FlightScheduleServiceTest`
 covering day-of-week matching, the idempotency skip, and ownership gating.
+
+## Stage 22 — Richer ancillary domain (structural/domain-gap arc, part 4 of 4 — arc complete)
+
+The last piece of the arc. `Ancillary` was airline-wide flat: one price, applying identically
+across an airline's entire fleet. Closed that gap with a two-tier shape - `Ancillary` (and the new
+`Meal`) stay reusable per-airline catalog definitions; `FlightAncillary`/`FlightMeal` are join
+entities carrying the real, per-flight bookable price and availability. Same pattern `Fare` already
+established (a flat catalog entity feeding a specific bookable instance), now applied to ancillaries
+and meals too.
+
+**A same-airline consistency check runs unconditionally, even for `ROLE_SYSTEM_ADMIN`** -
+deliberately separate from the ownership check next to it. `FlightAncillaryService`/
+`FlightMealService` verify two different things: does the requester own the airline behind this
+*flight* (ownership, admins bypass), and does the *ancillary/meal* being attached actually belong to
+that same airline (a data-consistency rule an admin shouldn't be able to skip either, since
+cross-wiring two airlines' catalogs is a modeling error, not a permissions question). Verified live:
+admin was correctly blocked (403) attaching Airline B's meal to Airline A's flight, then the
+identical request succeeded (201) once the meal actually belonged to Airline A - proving the check
+fires on the real mismatch, not the role.
+
+Deliberately skipped `InsuranceCoverage` (present in the original course design) to keep this stage
+the same size as the seat-catalog stage (3 new entities, not 4) - scope discipline, not an oversight.
+
+Third and final application of the `AirlineOwnershipChecker` extraction pattern (after seat-service
+and flight-ops-service) - `AncillaryService` now shares the utility instead of its own private copy.
+
+Verified live end-to-end through the gateway: created a `Meal` and an `Ancillary` for one airline,
+attached both to a real flight with per-flight prices that correctly differed from the catalog's
+base price, confirmed a different airline owner was blocked from touching the flight (403), and
+confirmed the same-airline mismatch check independently (403 even for admin, 201 once corrected).
+Full reactor `mvn test` confirmed `BUILD SUCCESS` with 22 new tests across `MealServiceTest`,
+`FlightAncillaryServiceTest`, and `FlightMealServiceTest`.
+
+**The structural/domain-gap arc from the course-code comparison is now complete**: FareRules +
+BaggagePolicy (Stage 19) → SeatMap + CabinClass + Seat (Stage 20) → FlightSchedule (Stage 21) →
+richer ancillary domain (Stage 22). Remaining smaller gaps from that original comparison (flight
+search, Redis caching, JWT logout, SMS notifications, CORS) are still open - see below.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 

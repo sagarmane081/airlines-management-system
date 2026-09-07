@@ -35,7 +35,7 @@ spring:
             - id: ancillary-service
               uri: lb://ancillary-service
               predicates:
-                - Path=/api/ancillaries,/api/ancillaries/**
+                - Path=/api/ancillaries,/api/ancillaries/**,/api/meals,/api/meals/**,/api/flight-ancillaries,/api/flight-ancillaries/**,/api/flight-meals,/api/flight-meals/**
             - id: seat-service
               uri: lb://seat-service
               predicates:

@@ -566,6 +566,33 @@ noted below.
   is always combined with the same date as `departureTime`. Real day-rollover handling is deferred,
   not silently wrong-by-accident - documented directly in the method's own Javadoc so it's visible
   at the call site, not just here.
+- **Richer ancillary domain closes the arc: `Ancillary`/`Meal` stay reusable per-airline catalog
+  definitions; `FlightAncillary`/`FlightMeal` are the join that carries the actual bookable price
+  and availability for one specific flight.** This is the real gap being closed - an ancillary's
+  price used to be flat across an airline's entire fleet ("extra baggage" costs the same on every
+  route), when in reality per-route pricing is normal. `Ancillary` keeps its own `price` as a
+  reference default; `FlightAncillary.price` is the real, required, per-flight override, same
+  two-tier shape as `Fare` (a flat catalog entity) versus the specific bookable instance pattern
+  used everywhere else in this codebase.
+- **A same-airline consistency check applies unconditionally, even to `ROLE_SYSTEM_ADMIN` -
+  deliberately not folded into the ownership check it sits next to.** `FlightAncillaryService`/
+  `FlightMealService` verify two separate things: (1) does the requester own the airline that owns
+  this *flight* (the usual ownership check, which admins bypass), and (2) does the *ancillary/meal*
+  being attached actually belong to that same airline (a data-consistency rule, not an
+  authorization rule - even an admin shouldn't be allowed to cross-wire one airline's flight to a
+  competitor's catalog item, since that's a modeling error, not a permissions question). Verified
+  live: admin was correctly blocked (403) from attaching Airline B's meal to Airline A's flight,
+  the same request that a same-airline attach immediately after succeeded on (201) - proving the
+  check fires on the actual mismatch, not just on the requester's role.
+- **Skipped `InsuranceCoverage`** (present in the original course design) to keep this stage
+  proportionate to the seat-catalog stage's size (3 new entities, not 4) - a deliberate scope
+  decision, not an oversight, consistent with this project's habit of not blindly matching the
+  original's full breadth. Real future work if ever wanted.
+- **Third and final application of the `AirlineOwnershipChecker` extraction pattern**, now in
+  ancillary-service too (after seat-service and flight-ops-service) - `AncillaryService` refactored
+  to use the shared utility instead of its own private copy, and `MealService`/
+  `FlightAncillaryService`/`FlightMealService` all reuse the same one rather than each getting their
+  own duplicate.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.
