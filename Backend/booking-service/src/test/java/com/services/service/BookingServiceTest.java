@@ -82,7 +82,7 @@ class BookingServiceTest {
         PaymentDto payment = new PaymentDto(5L, 10L, BigDecimal.valueOf(250), "PENDING");
         when(paymentClient.initiatePayment(any(PaymentDto.class))).thenReturn(payment);
 
-        BookingDto result = bookingService.createBooking(request(), 42L, "test@example.com");
+        BookingDto result = bookingService.createBooking(request(), 42L, "test@example.com", "+15550001111");
 
         assertEquals(BigDecimal.valueOf(250), result.getAmount());
         assertEquals(BookingStatus.PENDING, result.getStatus());
@@ -107,7 +107,7 @@ class BookingServiceTest {
         PaymentDto payment = new PaymentDto(5L, 10L, BigDecimal.valueOf(500), "PENDING");
         when(paymentClient.initiatePayment(any(PaymentDto.class))).thenReturn(payment);
 
-        BookingDto result = bookingService.createBooking(requestWithSeats(3L, 4L), 42L, "test@example.com");
+        BookingDto result = bookingService.createBooking(requestWithSeats(3L, 4L), 42L, "test@example.com", "+15550001111");
 
         assertEquals(BigDecimal.valueOf(500), result.getAmount());
         assertEquals(2, result.getPassengers().size());
@@ -121,7 +121,7 @@ class BookingServiceTest {
         doNothing().when(seatClient).holdSeat(3L);
         doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(4L);
 
-        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L, "test@example.com"));
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L, "test@example.com", "+15550001111"));
 
         verify(seatClient, times(1)).holdSeat(3L);
         verify(seatClient, times(1)).releaseSeat(3L);
@@ -137,7 +137,7 @@ class BookingServiceTest {
         doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(4L);
         doThrow(new RuntimeException("seat-service down")).when(seatClient).releaseSeat(3L);
 
-        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L, "test@example.com"));
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L, "test@example.com", "+15550001111"));
 
         verify(bookingRepository, never()).save(any());
     }
@@ -154,7 +154,7 @@ class BookingServiceTest {
         });
         doThrow(new RuntimeException("payment-service down")).when(paymentClient).initiatePayment(any(PaymentDto.class));
 
-        assertThrows(RuntimeException.class, () -> bookingService.createBooking(request(), 42L, "test@example.com"));
+        assertThrows(RuntimeException.class, () -> bookingService.createBooking(request(), 42L, "test@example.com", "+15550001111"));
 
         verify(seatClient, times(1)).releaseSeat(3L);
         ArgumentCaptor<Booking> captor = ArgumentCaptor.forClass(Booking.class);
@@ -174,7 +174,7 @@ class BookingServiceTest {
         });
         doThrow(new RuntimeException("payment-service down")).when(paymentClient).initiatePayment(any(PaymentDto.class));
 
-        assertThrows(RuntimeException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L, "test@example.com"));
+        assertThrows(RuntimeException.class, () -> bookingService.createBooking(requestWithSeats(3L, 4L), 42L, "test@example.com", "+15550001111"));
 
         verify(seatClient, times(1)).releaseSeat(3L);
         verify(seatClient, times(1)).releaseSeat(4L);
@@ -185,7 +185,7 @@ class BookingServiceTest {
         when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(3L);
 
-        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request(), 42L, "test@example.com"));
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request(), 42L, "test@example.com", "+15550001111"));
         verify(bookingRepository, never()).save(any());
         verifyNoInteractions(paymentClient);
     }
@@ -196,7 +196,7 @@ class BookingServiceTest {
         FeignException.Conflict conflict = mock(FeignException.Conflict.class);
         doThrow(new NoFallbackAvailableException("no fallback", conflict)).when(seatClient).holdSeat(3L);
 
-        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request(), 42L, "test@example.com"));
+        assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request(), 42L, "test@example.com", "+15550001111"));
         verify(bookingRepository, never()).save(any());
     }
 
@@ -207,7 +207,7 @@ class BookingServiceTest {
         doThrow(unrelated).when(seatClient).holdSeat(3L);
 
         NoFallbackAvailableException thrown = assertThrows(NoFallbackAvailableException.class,
-                () -> bookingService.createBooking(request(), 42L, "test@example.com"));
+                () -> bookingService.createBooking(request(), 42L, "test@example.com", "+15550001111"));
         assertSame(unrelated, thrown);
         verify(bookingRepository, never()).save(any());
     }

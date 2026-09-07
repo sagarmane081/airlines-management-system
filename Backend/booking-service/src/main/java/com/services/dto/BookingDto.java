@@ -16,6 +16,7 @@ public class BookingDto {
     private Long id;
     private Long userId;
     private String userEmail;
+    private String userPhone;
     private Long flightInstanceId;
     private Long fareId;
     private List<PassengerDto> passengers = new ArrayList<>();

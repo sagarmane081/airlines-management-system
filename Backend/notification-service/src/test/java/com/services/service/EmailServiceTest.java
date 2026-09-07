@@ -25,7 +25,7 @@ class EmailServiceTest {
     @Test
     void sendsBookingConfirmationToCustomerEmail() {
         emailService = new EmailService(mailSender, "noreply@airline-learn.local");
-        BookingConfirmedEvent event = new BookingConfirmedEvent(1L, 10L, List.of(20L, 21L), "customer@example.com");
+        BookingConfirmedEvent event = new BookingConfirmedEvent(1L, 10L, List.of(20L, 21L), "customer@example.com", "+15550001111");
 
         emailService.sendBookingConfirmation(event);
 
@@ -40,7 +40,7 @@ class EmailServiceTest {
     @Test
     void skipsSendingWhenCustomerEmailIsMissing() {
         emailService = new EmailService(mailSender, "noreply@airline-learn.local");
-        BookingConfirmedEvent event = new BookingConfirmedEvent(1L, 10L, List.of(20L), null);
+        BookingConfirmedEvent event = new BookingConfirmedEvent(1L, 10L, List.of(20L), null, "+15550001111");
 
         emailService.sendBookingConfirmation(event);
 

@@ -45,7 +45,7 @@ public class OutboxRelay {
         try {
             bookingEventProducer.publish(new BookingConfirmedEvent(
                             outboxEvent.getBookingId(), outboxEvent.getFlightInstanceId(), outboxEvent.getSeatInstanceIds(),
-                            outboxEvent.getCustomerEmail()))
+                            outboxEvent.getCustomerEmail(), outboxEvent.getCustomerPhone()))
                     .get(5, TimeUnit.SECONDS);
             outboxEvent.setPublished(true);
             outboxEventRepository.save(outboxEvent);

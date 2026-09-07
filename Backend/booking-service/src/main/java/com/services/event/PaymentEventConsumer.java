@@ -59,6 +59,6 @@ public class PaymentEventConsumer {
         outboxEventRepository.save(new OutboxEvent(
                 null, saved.getId(), saved.getFlightInstanceId(),
                 saved.getPassengers().stream().map(Passenger::getSeatInstanceId).toList(),
-                saved.getUserEmail(), false, LocalDateTime.now()));
+                saved.getUserEmail(), saved.getUserPhone(), false, LocalDateTime.now()));
     }
 }

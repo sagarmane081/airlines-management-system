@@ -28,6 +28,11 @@ public class User {
     @Column(unique = true)
     private String email;
 
+    // Optional - Twilio requires E.164 format (e.g. +15551234567) to actually send an SMS, but
+    // this is not validated/normalized here. A booking's confirmation SMS is silently skipped for
+    // any user without one, same graceful-skip pattern as a missing email.
+    private String phoneNumber;
+
     private String password;
 
     @Enumerated(EnumType.STRING)

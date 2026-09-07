@@ -43,6 +43,7 @@ public class AuthService {
         User user = new User();
         user.setFullName(request.getFullName());
         user.setEmail(request.getEmail());
+        user.setPhoneNumber(request.getPhoneNumber());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRole(request.getRole());
 
@@ -52,6 +53,7 @@ public class AuthService {
         response.setId(saved.getId());
         response.setFullName(saved.getFullName());
         response.setEmail(saved.getEmail());
+        response.setPhoneNumber(saved.getPhoneNumber());
         response.setRole(saved.getRole());
         return response;
     }
@@ -64,7 +66,7 @@ public class AuthService {
             throw new InvalidCredentialsException("Invalid email or password");
         }
 
-        String token = jwtUtil.generateToken(user.getId(), user.getEmail(), user.getRole().name());
+        String token = jwtUtil.generateToken(user.getId(), user.getEmail(), user.getRole().name(), user.getPhoneNumber());
 
         LoginResponse response = new LoginResponse();
         response.setToken(token);

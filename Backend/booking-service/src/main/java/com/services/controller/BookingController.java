@@ -19,8 +19,9 @@ public class BookingController {
     @PostMapping
     public ResponseEntity<BookingDto> createBooking(@RequestBody BookingDto bookingDto,
                                                      @RequestHeader("X-User-Id") Long requesterId,
-                                                     @RequestHeader("X-User-Email") String requesterEmail) {
-        return new ResponseEntity<>(bookingService.createBooking(bookingDto, requesterId, requesterEmail), HttpStatus.CREATED);
+                                                     @RequestHeader("X-User-Email") String requesterEmail,
+                                                     @RequestHeader(value = "X-User-Phone", required = false) String requesterPhone) {
+        return new ResponseEntity<>(bookingService.createBooking(bookingDto, requesterId, requesterEmail, requesterPhone), HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")

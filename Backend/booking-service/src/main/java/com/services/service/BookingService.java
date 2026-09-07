@@ -46,7 +46,7 @@ public class BookingService {
         this.seatClient = seatClient;
     }
 
-    public BookingDto createBooking(BookingDto bookingDto, Long requesterId, String requesterEmail) {
+    public BookingDto createBooking(BookingDto bookingDto, Long requesterId, String requesterEmail, String requesterPhone) {
         FareDto fare = pricingClient.getFareById(bookingDto.getFareId());
 
         holdAllSeatsOrRollback(bookingDto.getPassengers());
@@ -54,6 +54,7 @@ public class BookingService {
         Booking booking = new Booking();
         booking.setUserId(requesterId);
         booking.setUserEmail(requesterEmail);
+        booking.setUserPhone(requesterPhone);
         booking.setFlightInstanceId(bookingDto.getFlightInstanceId());
         booking.setFareId(bookingDto.getFareId());
         booking.setStatus(BookingStatus.PENDING);

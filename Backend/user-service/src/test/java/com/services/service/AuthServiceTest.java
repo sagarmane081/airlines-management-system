@@ -65,7 +65,7 @@ class AuthServiceTest {
             return u;
         });
 
-        SignupRequest request = new SignupRequest("Jane Doe", "new@example.com", "secret123", Role.ROLE_CUSTOMER);
+        SignupRequest request = new SignupRequest("Jane Doe", "new@example.com", "+15550001111", "secret123", Role.ROLE_CUSTOMER);
         UserResponse result = authService.signup(request);
 
         assertEquals(1L, result.getId());
@@ -77,7 +77,7 @@ class AuthServiceTest {
     void signupThrowsWhenEmailAlreadyRegistered() {
         when(userRepository.findByEmail("taken@example.com")).thenReturn(Optional.of(new User()));
 
-        SignupRequest request = new SignupRequest("Jane Doe", "taken@example.com", "secret123", Role.ROLE_CUSTOMER);
+        SignupRequest request = new SignupRequest("Jane Doe", "taken@example.com", "+15550001111", "secret123", Role.ROLE_CUSTOMER);
 
         assertThrows(EmailAlreadyRegisteredException.class, () -> authService.signup(request));
         verify(userRepository, never()).save(any());
@@ -85,10 +85,10 @@ class AuthServiceTest {
 
     @Test
     void loginReturnsTokenOnCorrectCredentials() {
-        User user = new User(1L, "Jane Doe", "jane@example.com", "encoded-hash", Role.ROLE_CUSTOMER);
+        User user = new User(1L, "Jane Doe", "jane@example.com", "+15550001111", "encoded-hash", Role.ROLE_CUSTOMER);
         when(userRepository.findByEmail("jane@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("secret123", "encoded-hash")).thenReturn(true);
-        when(jwtUtil.generateToken(1L, "jane@example.com", "ROLE_CUSTOMER")).thenReturn("fake-jwt");
+        when(jwtUtil.generateToken(1L, "jane@example.com", "ROLE_CUSTOMER", "+15550001111")).thenReturn("fake-jwt");
 
         LoginResponse result = authService.login(new LoginRequest("jane@example.com", "secret123"));
 
@@ -107,7 +107,7 @@ class AuthServiceTest {
 
     @Test
     void loginThrowsWhenPasswordDoesNotMatch() {
-        User user = new User(1L, "Jane Doe", "jane@example.com", "encoded-hash", Role.ROLE_CUSTOMER);
+        User user = new User(1L, "Jane Doe", "jane@example.com", "+15550001111", "encoded-hash", Role.ROLE_CUSTOMER);
         when(userRepository.findByEmail("jane@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("wrong", "encoded-hash")).thenReturn(false);
 

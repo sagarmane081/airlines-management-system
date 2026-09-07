@@ -782,6 +782,166 @@ sessions/devices" operation, since nothing currently tracks which tokens belong 
 sessions beyond the claims embedded in each token itself. Real future work if ever wanted, not
 attempted here.
 
+## Stage 26 — CORS (fourth of the "smaller gaps")
+
+Triggered by analyzing the original course's frontend (`Frontend Original/`, copied in read-only
+for structural reference, same as the earlier `Backend Original/` comparison - never a dependency
+of the build itself). Its dev server runs on `http://localhost:5173` and calls the backend through
+a single `axios` instance with a Bearer token from `localStorage` - the same trusted-header/JWT
+model this backend already has, but from a **browser**, which is the one client type that actually
+enforces CORS (every prior verification in this whole build used `curl`, which ignores CORS
+entirely - the gap was real but had been invisible until now).
+
+Added global CORS to `api-gateway`'s local `application.yml` (not `config-repo` - same reasoning
+already established for routes: CORS is part of the gateway's structural definition of what it
+exposes, and its config shape has the same remote-config-server list/map-binding fragility that
+justified keeping routes local). Confirmed the exact property path by reading
+`GlobalCorsProperties`'s real Boot/Cloud-Gateway source rather than assuming - it binds to
+`spring.cloud.gateway.server.webflux.globalcors.cors-configurations`, the same prefix family
+already confirmed for routes in Stage 5, not the more commonly-documented
+`spring.cloud.gateway.globalcors`.
+
+**Design decisions:**
+
+- **Origin allowlist is explicit** (`http://localhost:5173` only), not a wildcard - deliberately
+  narrow for now since only the known local dev frontend origin exists; a deployed frontend origin
+  is real future work to add here, not forgotten.
+- **`allowCredentials` was deliberately left unset (false)** - it only governs cookies/HTTP
+  auth/TLS certs automatically attached by the browser. A manually-set `Authorization: Bearer
+  <token>` header (this project's entire auth model) isn't a CORS "credential" and works fine
+  without it - and leaving it false sidesteps the CORS spec rule that `allowCredentials: true`
+  cannot be combined with a wildcard origin, which doesn't apply here anyway since the origin list
+  is already explicit.
+- **`allowedHeaders` is scoped to what the frontend actually sends** (`Content-Type`,
+  `Authorization`), not a wildcard - matches every other "explicit over implicit" choice already
+  established in this build (e.g. the Resilience4j `minimum-number-of-calls` setting).
+
+**Verification needed a real browser, not `curl`** - `curl` doesn't send `Origin` or enforce
+preflight, so it can't prove or disprove CORS behavior at all. Built a tiny static test page
+(`fetch('http://localhost:5000/api/cities', {headers: {Authorization: 'Bearer ...'}})`), served it
+over real HTTP on two ports via the Browser pane: `5173` (the allowed origin) and `5174` (a
+disallowed origin), and confirmed three independent signals. (1) From `5173`, a real browser fetch
+succeeded - `status=401` (the fake token was correctly rejected, a separate concern from CORS) was
+readable in JS, which is only possible if the browser let the response through at all. (2)
+`access-control-allow-origin` read via `res.headers.get()` from JS came back `null` even on the
+successful `5173` request - initially looked like a failure, but is actually expected: that header
+isn't on the Fetch API's default response-header read safelist, so JS can never see it via
+`headers.get()` regardless of whether the server sent it. Confirmed the real headers instead via
+raw `curl -i` simulating the identical preflight (`Origin`, `Access-Control-Request-Method/
+Headers`) - the response correctly carried `Access-Control-Allow-Origin: http://localhost:5173`,
+`Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE,OPTIONS`, `Access-Control-Allow-Headers:
+authorization`, and `Access-Control-Max-Age: 3600`, present even on the downstream 401 response
+(proving `JwtAuthenticationFilter`'s early-completion path doesn't bypass the earlier `CorsWebFilter`
+header injection). (3) From `5174` (disallowed), the real browser fetch threw `"Failed to fetch"` -
+genuinely blocked by the browser itself, not just a missing header - and the raw `curl` preflight
+simulation for `5174` confirmed why: `403 Forbidden`, no CORS headers at all. Both test HTTP servers
+stopped afterward.
+
+**Known limitation**: only the local dev origin is allowlisted. Adding a deployed frontend origin
+(Vercel, etc.) is a one-line addition to the same `allowedOrigins` list whenever that exists - not
+attempted here since no such deployment exists yet.
+
+## Stage 27 — SMS notifications via Twilio (fifth and last of the "smaller gaps")
+
+Extends Stage 18's real-notification-delivery work (email via MailHog) with a second channel.
+`notification-service`'s `BookingConfirmedEventConsumer` now attempts both an email and an SMS on
+every `booking.confirmed` event, each independently.
+
+**Threading a phone number end-to-end needed four services touched**, not just notification-service
+- `User` gained an optional `phoneNumber` (`user-service`), embedded as a JWT claim at login
+(`JwtUtil.generateToken`), forwarded by `api-gateway`'s `JwtAuthenticationFilter` as `X-User-Phone`
+(only when the claim is actually present - a user without a phone gets no header at all, not an
+empty one), read by `booking-service`'s `BookingController`/`BookingService` and stamped onto
+`Booking.userPhone` exactly like `userEmail` already was, then threaded through
+`OutboxEvent.customerPhone` → `BookingConfirmedEvent.customerPhone` → `SmsService`. Same pipeline
+shape as email in Stage 18, just extended one field further - the email precedent made this a
+mechanical, well-understood change rather than a new design.
+
+**A real testability problem surfaced and was fixed before any live testing**: the first version of
+`SmsService` called `Twilio.init(...)` directly in its own constructor and referenced
+`TwilioConstant`'s fail-fast fields (`ACCOUNT_SID`/`AUTH_TOKEN`/`FROM_PHONE_NUMBER`, mirroring
+`JwtConstant`'s env-var pattern) from inside `sendBookingConfirmationSms`. That would have made
+`SmsServiceTest` require real Twilio env vars just to construct the service - exactly the trap
+`AuthServiceTest` was already built to avoid around `JwtConstant` (by mocking `JwtUtil` entirely).
+Fixed by splitting responsibilities: `TwilioInitializer` (a separate `@Component` with
+`@PostConstruct`) owns the one-time global `Twilio.init(ACCOUNT_SID, AUTH_TOKEN)` call, `SmsService`
+now takes `fromPhoneNumber` as a plain constructor-injected `@Value` (sourced from
+`config-repo/notification-service.yml`'s `twilio.from-phone-number: ${TWILIO_PHONE_NUMBER}` - a
+normal Spring placeholder, not `TwilioConstant`, since the from-number isn't actually a secret the
+way the account SID/auth token are). `SmsServiceTest` now constructs a real `SmsService` with a
+literal string, no environment dependency at all - confirmed by running `mvn test` for
+notification-service with no Twilio env vars sourced, and it passed. Only the account
+SID/auth token - genuine secrets - keep the fail-fast `TwilioConstant`/`System.getenv()` treatment.
+
+**`Message.creator(...)` is a static Twilio SDK call, not an injected collaborator**, so
+`SmsServiceTest` uses Mockito's static mocking (`mockStatic(Message.class)`) instead of the usual
+constructor-injection `@Mock` pattern every other service test in this codebase uses - the first
+time this project needed it. Confirmed it works with zero extra dependency: Mockito 5's inline mock
+maker (bundled in `mockito-core`, already on the classpath via `spring-boot-starter-test`) supports
+static mocking by default since Mockito 5.0, no separate `mockito-inline` artifact needed.
+
+**Verified the actual Twilio Java SDK coordinates and API shape against the real jar before
+writing code**, not from memory - `com.twilio.sdk:twilio:13.0.0` confirmed directly against Maven
+Central's `maven-metadata.xml`, and `Twilio.init(String,String)` / `Message.creator(PhoneNumber,
+PhoneNumber, String)` / the no-arg `Creator.create()` convenience method confirmed via `javap`
+against the downloaded jar - same discipline already applied to every Spring Boot 4 module-split
+surprise this project has hit (Kafka, Security, Health, Cache).
+
+**Each notification channel gets its own independent try/catch in the consumer** - an SMTP outage
+must not prevent the SMS attempt, and a Twilio failure must not prevent the email attempt. Two new
+tests (`aFailedEmailSendDoesNotPreventTheSmsAttempt`, `aFailedSmsSendDoesNotPreventTheEmailAttempt`)
+directly assert this in `BookingConfirmedEventConsumerTest`, not just the existing "one failure
+doesn't propagate" tests carried over from Stage 18.
+
+**A real, unrelated gap was found and fixed while building the live test data**: `POST
+/api/seat-instances` actually requires a real `Seat` reference (`seatRepository.findById(seatId)`,
+throwing if absent) - contradicting a prior assumption in this file that a full seat catalog wasn't
+needed to create a seat instance (that note was about the entity column being nullable for the
+concurrency *test*, which manipulates the repository directly, not about the REST API accepting a
+null seat). Discovered as a real `500` (not the intended `404`) because `seatRepository.findById(null)`
+throws `InvalidDataAccessApiUsageException` rather than returning empty - a second, smaller,
+pre-existing gap this stage did not attempt to fix (a `400` would be more correct than a `500` for
+a missing required reference, but that's a pattern that would need auditing across every service
+that does this, not a one-line fix specific to SMS).
+
+Full reactor `mvn test` confirmed `BUILD SUCCESS`, including two other test files this stage's
+`BookingConfirmedEvent.customerPhone` field addition rippled into and required updating -
+`seat-service`'s own `BookingConfirmedEventConsumerTest` (it also consumes this event, to mark
+seats `BOOKED`) plus `booking-service`'s `OutboxRelayTest`/`PaymentEventConsumerTest` - a reminder
+that a shared `common-lib` event type change needs a repo-wide grep for every construction site,
+not just the modules a stage's design initially focuses on.
+
+Verified live end-to-end through the real gateway, with real Twilio credentials the user added to
+`.env` (never pasted into or handled directly by the assistant beyond writing them into that
+gitignored file once volunteered in chat - flagged to the user that pasting live secrets into a
+chat transcript isn't private storage, and recommended rotating the Twilio auth token afterward as
+a precaution). Built a full booking chain (city → airport → airline → aircraft → seat map → cabin
+class → seat → flight → flight instance → fare → seat instance → booking → payment confirmation)
+and confirmed, in order: (1) the signup response and the booking's `userPhone` field both correctly
+carried the real phone number end-to-end; (2) the JWT's decoded payload actually contained a
+`phoneNumber` claim; (3) `notification-service`'s logs showed a real Twilio API call was made and
+correctly rejected with Twilio's own error 21608 ("trial account, unverified destination number")
+before the number was verified; (4) MailHog confirmed the booking-confirmation **email** still sent
+successfully in the exact same failed attempt - direct proof the two channels' failure isolation
+works, not just that the code compiles that way; (5) after the user verified the destination number
+in the Twilio console, `TWILIO`'s own `OutgoingCallerIds` API was queried directly
+(`GET /2010-04-01/Accounts/{sid}/OutgoingCallerIds.json`) to check real state rather than trusting
+the console alone - it kept returning an empty list even after the user's verification, so a third
+retry attempt was made and still correctly rejected with the identical, correct error. Per the
+user's explicit choice, real delivery was not chased further - the repeated real API calls, the
+consistent and correct rejection reason, and the independently-successful email are accepted as
+sufficient proof the integration is wired correctly end-to-end; getting an actual SMS to land is a
+Twilio-account-configuration matter outside this codebase, not a code gap.
+
+All test data cleaned from MySQL, Redis (including stale cache entries for the now-deleted test
+airline/aircraft/airports from Stage 24's caching), and MailHog afterward.
+
+**Known limitations**: E.164 phone number format is not validated or normalized anywhere in this
+codebase - a badly-formatted number just produces a Twilio API error at send time, caught and
+logged like any other SMS failure, not a validation error at signup. `POST /api/seat-instances`
+returning `500` instead of `404` for a missing/null seat reference (found during this stage's live
+test setup) remains unfixed - a real, pre-existing, narrow gap, not specific to SMS.
+
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
 - Test coverage is service-layer only — controllers and Spring Data repository interfaces aren't

@@ -32,6 +32,9 @@ public class Booking {
 
     private String userEmail;
 
+    // Optional - see User.phoneNumber in user-service for why this can be null.
+    private String userPhone;
+
     private Long flightInstanceId;
 
     private Long fareId;

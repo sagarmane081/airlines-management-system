@@ -12,3 +12,9 @@ spring:
 notification:
   mail:
     from: noreply@airline-learn.local
+
+# Not a secret on its own (unlike the account SID/auth token, which use the fail-fast
+# TwilioConstant pattern instead), so it's threaded via a normal Spring placeholder rather than
+# System.getenv() - Spring still fails startup loudly if TWILIO_PHONE_NUMBER is unset.
+twilio:
+  from-phone-number: ${TWILIO_PHONE_NUMBER}

@@ -61,13 +61,20 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
                         return exchange.getResponse().setComplete();
                     }
 
-                    ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                    ServerHttpRequest.Builder requestBuilder = exchange.getRequest().mutate()
                             .header("X-User-Id", String.valueOf(claims.get("userId")))
                             .header("X-User-Email", claims.getSubject())
-                            .header("X-User-Roles", String.valueOf(claims.get("role")))
-                            .build();
+                            .header("X-User-Roles", String.valueOf(claims.get("role")));
 
-                    return chain.filter(exchange.mutate().request(mutatedRequest).build());
+                    // Optional - a user who signed up without a phone number has no "phoneNumber"
+                    // claim at all, so this header is only forwarded when one genuinely exists,
+                    // matching the same optionality already established for the entity/DTO field.
+                    Object phoneClaim = claims.get("phoneNumber");
+                    if (phoneClaim != null) {
+                        requestBuilder.header("X-User-Phone", String.valueOf(phoneClaim));
+                    }
+
+                    return chain.filter(exchange.mutate().request(requestBuilder.build()).build());
                 });
     }
 

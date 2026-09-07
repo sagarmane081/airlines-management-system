@@ -37,7 +37,7 @@ class BookingConfirmedEventConsumerTest {
 
         when(seatInstanceRepository.findById(1L)).thenReturn(Optional.of(seat));
 
-        BookingConfirmedEvent event = new BookingConfirmedEvent(100L, 10L, List.of(1L), "customer@example.com");
+        BookingConfirmedEvent event = new BookingConfirmedEvent(100L, 10L, List.of(1L), "customer@example.com", "+15550001111");
 
         consumer.onBookingConfirmed(event);
         consumer.onBookingConfirmed(event); // simulated redelivery of the same message
@@ -60,7 +60,7 @@ class BookingConfirmedEventConsumerTest {
         when(seatInstanceRepository.findById(1L)).thenReturn(Optional.of(seat1));
         when(seatInstanceRepository.findById(2L)).thenReturn(Optional.of(seat2));
 
-        consumer.onBookingConfirmed(new BookingConfirmedEvent(100L, 10L, List.of(1L, 2L), "customer@example.com"));
+        consumer.onBookingConfirmed(new BookingConfirmedEvent(100L, 10L, List.of(1L, 2L), "customer@example.com", "+15550001111"));
 
         assertEquals(SeatStatus.BOOKED, seat1.getStatus());
         assertEquals(SeatStatus.BOOKED, seat2.getStatus());

@@ -48,6 +48,8 @@ public class OutboxEvent {
 
     private String customerEmail;
 
+    private String customerPhone;
+
     private boolean published;
 
     private LocalDateTime createdAt;
