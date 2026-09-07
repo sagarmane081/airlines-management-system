@@ -1,6 +1,5 @@
 package com.services.dto;
 
-import com.services.entity.SeatStatus;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -8,9 +7,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class SeatInstanceDto {
+public class SeatMapDto {
     private Long id;
-    private Long flightInstanceId;
-    private SeatDto seat;
-    private SeatStatus status;
+    private Long aircraftId;
+    private Integer totalRows;
 }

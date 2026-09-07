@@ -14,22 +14,28 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "seat_instances")
+@Table(name = "cabin_classes")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class SeatInstance {
+public class CabinClass {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Long flightInstanceId;
+    @Enumerated(EnumType.STRING)
+    private CabinClassType name;
+
+    private Integer startRow;
+
+    private Integer endRow;
+
+    private Integer seatsPerRow;
+
+    private Integer seatPitchInches;
 
     @ManyToOne
-    @JoinColumn(name = "seat_id")
-    private Seat seat;
-
-    @Enumerated(EnumType.STRING)
-    private SeatStatus status;
+    @JoinColumn(name = "seat_map_id")
+    private SeatMap seatMap;
 }

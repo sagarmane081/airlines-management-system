@@ -49,8 +49,6 @@ class SeatInstanceConcurrencyTest {
     void onlyOneConcurrentHoldWinsForTheSameSeat() throws InterruptedException {
         SeatInstance seat = new SeatInstance();
         seat.setFlightInstanceId(-1L);
-        seat.setSeatNumber("CONCURRENCY-TEST");
-        seat.setCabinClass("ECONOMY");
         seat.setStatus(SeatStatus.AVAILABLE);
         Long seatId = seatInstanceRepository.save(seat).getId();
 

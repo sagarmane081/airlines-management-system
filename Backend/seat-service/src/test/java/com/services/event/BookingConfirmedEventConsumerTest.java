@@ -33,8 +33,6 @@ class BookingConfirmedEventConsumerTest {
         SeatInstance seat = new SeatInstance();
         seat.setId(1L);
         seat.setFlightInstanceId(10L);
-        seat.setSeatNumber("1A");
-        seat.setCabinClass("ECONOMY");
         seat.setStatus(SeatStatus.HELD);
 
         when(seatInstanceRepository.findById(1L)).thenReturn(Optional.of(seat));

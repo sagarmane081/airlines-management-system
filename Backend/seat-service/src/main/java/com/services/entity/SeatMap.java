@@ -1,35 +1,26 @@
 package com.services.entity;
 
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "seat_instances")
+@Table(name = "seat_maps")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class SeatInstance {
+public class SeatMap {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Long flightInstanceId;
+    private Long aircraftId;
 
-    @ManyToOne
-    @JoinColumn(name = "seat_id")
-    private Seat seat;
-
-    @Enumerated(EnumType.STRING)
-    private SeatStatus status;
+    private Integer totalRows;
 }

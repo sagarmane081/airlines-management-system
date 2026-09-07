@@ -26,6 +26,7 @@ without re-reading the whole conversation history.
 | 17 | Saga compensation for payment-initiation failure — a booking is cancelled, not stuck, if payment can't start | ✅ Done |
 | 18 | Real notification delivery — booking confirmation sends an actual email via MailHog | ✅ Done |
 | 19 | FareRules + BaggagePolicy — first of the structural/domain-gap arc closing the course-code comparison | ✅ Done |
+| 20 | SeatMap + CabinClass + Seat — second of the arc; SeatInstance now backed by a real seat catalog | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -469,6 +470,57 @@ correct round-trip on `GET`), and a second fare with neither (confirmed both sta
 defaulted). Full reactor `mvn test` confirmed `BUILD SUCCESS`, with `FareServiceTest` gaining 2 new
 cases (linked-when-provided, null-when-not-provided) on top of the existing ownership-check
 coverage.
+
+## Stage 20 — SeatMap + CabinClass + Seat (structural/domain-gap arc, part 2 of 4)
+
+The biggest stage of the arc: `SeatInstance` previously carried `seatNumber`/`cabinClass` as
+freely-typed strings with no catalog backing at all - no consistency guarantee, no validation, no
+real seat map behind any of it. Closed that with three new entities in `seat-service`:
+
+- **`SeatMap`** — one per aircraft (`aircraftId`, cross-service to `airline-core-service`), total
+  row count.
+- **`CabinClass`** — a tier (`ECONOMY`/`PREMIUM_ECONOMY`/`BUSINESS`/`FIRST`) claiming a row range
+  within a `SeatMap`, with its own seat pitch and seats-per-row. Real `@ManyToOne` to `SeatMap`
+  (same service).
+- **`Seat`** — one physical row/column within a `CabinClass` (window/middle/aisle, exit row).
+  `getSeatNumber()` is derived (`seatRow + columnLetter`), not stored, so it can't drift out of
+  sync with its parts.
+
+`SeatInstance.seat` now references a real `Seat` (`@ManyToOne`, same service) instead of two raw
+strings — the actual point of this stage. Unlike `FareRules`/`BaggagePolicy` (nested, created
+atomically with their parent), these three are independent CRUD resources with their own
+controllers, the same shape as `Aircraft`/`Airport` — a seat catalog is configured once per
+aircraft, not tied to any one flight. Ownership resolved the same way as everywhere else: walk the
+chain to `aircraftId`, call `airline-core-service` via a new no-fallback `AircraftClient`, reusing
+`AircraftDto` from `common-lib`.
+
+Extracted a shared `AirlineOwnershipChecker` utility for the three new services rather than
+duplicating the identical check three times — the established "duplicate per service" convention
+was about avoiding cross-service coupling in `common-lib`, not about repeating logic within one
+service's own sibling classes authored in the same stage.
+
+Two real bugs, both only catchable live, neither visible in `mvn test-compile` or the (passing)
+mocked unit tests:
+1. **`ROW_NUMBER` is a reserved keyword in MySQL 8.0** (added for window functions). Hibernate's
+   schema update failed to create the `seats` table with a syntax error but only logged a `WARN`,
+   not a fatal error - the app "started successfully" with the table simply missing. Only surfaced
+   when `SeatInstanceConcurrencyTest` (the one test reading a `SeatInstance` back with its seat
+   joined) hit a live "Table doesn't exist" against the real Testcontainers MySQL. Fixed by renaming
+   the field to `seatRow`.
+2. **A primitive `boolean` DTO field breaks Jackson deserialization of a partial JSON object.**
+   `SeatDto.exitRow` (and latently, `FareRulesDto.refundable`/`changeable` since Stage 19) failed
+   with `Cannot map 'null' into type 'boolean'` the moment a request omitted the field - Jackson can
+   select the Lombok all-args constructor as its creator, and a missing property becomes a `null`
+   constructor argument, which throws for a primitive instead of defaulting. Fixed project-wide by
+   changing every primitive `boolean` DTO field to `Boolean`, with null-safe unboxing where a real
+   primitive is needed again (entity setters).
+
+Verified live through the gateway end-to-end: created a `SeatMap` for a real aircraft, a
+`CabinClass` within it, a `Seat` within that, then a `SeatInstance` referencing the seat (full
+nested enrichment round-tripped correctly), exercised hold/release, and booked it through
+`booking-service`'s real saga to confirm zero regression in the existing flow. Full reactor
+`mvn test` confirmed `BUILD SUCCESS`, including the concurrency test, with 20 new tests across
+`SeatMapServiceTest`/`CabinClassServiceTest`/`SeatServiceTest`.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 

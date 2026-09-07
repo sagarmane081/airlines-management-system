@@ -11,8 +11,11 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class FareRulesDto {
     private Long id;
-    private boolean refundable;
-    private boolean changeable;
+    // Boolean, not boolean - Jackson can select the Lombok all-args constructor as a creator for
+    // partial JSON objects, and passing null into a primitive constructor slot throws instead of
+    // defaulting. A wrapper type tolerates the field being omitted from a request.
+    private Boolean refundable;
+    private Boolean changeable;
     private BigDecimal cancellationFee;
     private BigDecimal changeFee;
     private Integer refundDeadlineHours;

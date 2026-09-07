@@ -93,7 +93,7 @@ class FareServiceTest {
 
         FareDto result = fareService.createFare(request, 42L, "ROLE_AIRLINE_OWNER");
 
-        assertTrue(result.getFareRules().isRefundable());
+        assertTrue(result.getFareRules().getRefundable());
         assertEquals(24, result.getFareRules().getRefundDeadlineHours());
         assertEquals(BigDecimal.valueOf(10), result.getBaggagePolicy().getExtraBaggageFeePerKg());
     }

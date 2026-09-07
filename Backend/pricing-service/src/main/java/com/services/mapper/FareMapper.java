@@ -45,8 +45,8 @@ public class FareMapper {
 
     public static FareRules toEntity(FareRulesDto dto) {
         FareRules fareRules = new FareRules();
-        fareRules.setRefundable(dto.isRefundable());
-        fareRules.setChangeable(dto.isChangeable());
+        fareRules.setRefundable(Boolean.TRUE.equals(dto.getRefundable()));
+        fareRules.setChangeable(Boolean.TRUE.equals(dto.getChangeable()));
         fareRules.setCancellationFee(dto.getCancellationFee());
         fareRules.setChangeFee(dto.getChangeFee());
         fareRules.setRefundDeadlineHours(dto.getRefundDeadlineHours());

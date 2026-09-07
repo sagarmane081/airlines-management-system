@@ -489,6 +489,56 @@ noted below.
   already Feign-calls `pricing-service.getFareById` — automatically gains the new fields with zero
   changes on its side.** Not a projection like `FlightOwnerView`; both sides share the exact same
   class from the exact same jar, so there's no deserialization-compatibility question to verify.
+- **Seat catalog modeling: `SeatMap` (per-aircraft layout) → `CabinClass` (a tier's row range within
+  it) → `Seat` (one physical row/column) → `SeatInstance` now references a real `Seat` instead of
+  freely-typed `seatNumber`/`cabinClass` strings.** All three new entities are same-service
+  relationships (`CabinClass → SeatMap`, `Seat → CabinClass`), so real `@ManyToOne`s; `SeatMap`
+  itself carries `aircraftId` as the one cross-service Long, matching `Airport`/`Aircraft`'s
+  established split. `SeatInstance.seat` is nullable (no `nullable=false`) specifically so the
+  existing `SeatInstanceConcurrencyTest` didn't need to seed a full catalog chain just to test
+  locking — it only cares about the `status` column.
+- **`SeatMap`/`CabinClass`/`Seat` are independent CRUD resources (their own controllers), unlike
+  `FareRules`/`BaggagePolicy`.** The distinguishing question: does this thing make sense without
+  its parent, and does an airline owner configure it separately from any one flight? A seat catalog
+  is set up once per aircraft, independent of any particular flight instance - closer to
+  `Aircraft`/`Airport` than to `Passenger`/`Ticket`. Ownership resolved by walking each entity's
+  chain to `aircraftId` and calling `airline-core-service` (reusing `AircraftDto`, already in
+  `common-lib` from Stage 15 - no new projection needed), via a new no-fallback `AircraftClient` in
+  seat-service.
+- **Extracted `AirlineOwnershipChecker` as a small shared static utility, not three copies.** The
+  established "duplicate the ownership check per service" convention was about avoiding a shared
+  *cross-service* dependency in `common-lib`; it was never a mandate to duplicate identical logic
+  *within* one service's own sibling classes. `SeatMapService`/`CabinClassService`/`SeatService` all
+  need the exact same check, authored together in the same stage - sharing it locally is the more
+  consistent choice, the same way `FlightService` already reuses one ownership-check method across
+  its two `create*` methods rather than duplicating it a second time in the same class.
+- **Real, only-catchable-live bug: `ROW_NUMBER` is a reserved keyword in MySQL 8.0** (added for
+  window functions in 8.0). `Seat.rowNumber` mapped to a column literally named `row_number`, and
+  Hibernate's `ddl-auto: update` schema generation failed to `CREATE TABLE seats (...)` with a
+  syntax error - but logged it as a `WARN`, not a fatal startup error, so the app started
+  "successfully" with the `seats` table simply never created. Every other new table
+  (`cabin_classes`, `seat_maps`, plus the `seat_id` FK column added to the pre-existing
+  `seat_instances`) was created fine in the same pass, which made this look like an entity-scanning
+  problem rather than a keyword collision at first. Only surfaced when `SeatInstanceConcurrencyTest`
+  (the one test that actually reads a `SeatInstance` back with its `@ManyToOne Seat` joined) hit a
+  live "Table 'test.seats' doesn't exist" against the real Testcontainers MySQL - a Mockito unit
+  test would never construct real DDL and couldn't have caught it. Fixed by renaming the field to
+  `seatRow` (also arguably the better name). Worth remembering for any future column name: MySQL
+  8.0's window-function keywords (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LEAD`, `LAG`, `NTILE`, `OVER`,
+  and a few more) are now reserved and will silently break schema generation the same way.
+- **Real, latent Jackson/Lombok bug, also only surfaced live: a primitive `boolean` field on a DTO
+  with both `@NoArgsConstructor` and `@AllArgsConstructor` breaks deserialization of a partial JSON
+  object.** `SeatDto.exitRow` (and `FareRulesDto.refundable`/`changeable`, latent since Stage 19 but
+  never triggered because every prior test happened to supply both booleans) failed with `Cannot
+  map 'null' into type 'boolean'` the moment a request omitted the field - e.g. `{"seat":{"id":1}}`
+  when creating a `SeatInstance`, supplying only the reference id. Root cause: Jackson can select a
+  Lombok all-args constructor as its deserialization creator instead of no-args-plus-setters, and a
+  JSON property absent from a partial object becomes a `null` argument at that constructor
+  position - which throws immediately for a primitive parameter instead of leaving it at its Java
+  default. Fixed by changing every primitive `boolean` DTO field project-wide to `Boolean`, with
+  null-safe unboxing (`Boolean.TRUE.equals(dto.getX())`) in the one direction (DTO → entity) that
+  needs a real primitive again. Entities themselves keep primitive `boolean` - they're never
+  JSON-deserialized directly, only built through mappers, so they were never at risk.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.

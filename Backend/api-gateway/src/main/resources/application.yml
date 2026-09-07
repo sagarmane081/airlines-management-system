@@ -39,7 +39,7 @@ spring:
             - id: seat-service
               uri: lb://seat-service
               predicates:
-                - Path=/api/seat-instances,/api/seat-instances/**
+                - Path=/api/seat-instances,/api/seat-instances/**,/api/seat-maps,/api/seat-maps/**,/api/cabin-classes,/api/cabin-classes/**,/api/seats,/api/seats/**
             - id: flight-ops-service
               uri: lb://flight-ops-service
               predicates:
