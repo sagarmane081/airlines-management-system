@@ -593,6 +593,66 @@ BaggagePolicy (Stage 19) → SeatMap + CabinClass + Seat (Stage 20) → FlightSc
 richer ancillary domain (Stage 22). Remaining smaller gaps from that original comparison (flight
 search, Redis caching, JWT logout, SMS notifications, CORS) are still open - see below.
 
+## Stage 23 — Flight search (first of the "smaller gaps")
+
+Every earlier stage let a client fetch flights/instances by ID or list everything - there was no
+way to ask "what flies from A to B on date X", the actual first thing a real traveler does. Closed
+that with `GET /api/flights/search?departureAirportId=&arrivalAirportId=&date=&cabinClass=&minPrice=
+&maxPrice=&sortBy=`, entirely inside `flight-ops-service` (plus one small supporting endpoint in
+`pricing-service`), no new entities needed - this is a read/aggregation feature over data that
+already exists.
+
+**Design decisions:**
+
+- **`pricing-service` gained a bulk lookup**: `GET /api/fares?flightIds=1,2,3` (reusing the existing
+  `GET /api/fares` path with an optional query param, same shape as every other bulk-lookup endpoint
+  in this codebase - `getAllAirlines`/`getAllFlights`'s `ids` param from the N+1 fix). Backed by a
+  new `FareRepository.findAllByFlightIdIn`.
+- **`flight-ops-service`'s new `FareClient` deliberately HAS a circuit-breaker fallback** (returns
+  `List.of()`), unlike `PricingClient`/`PaymentClient` in `booking-service`. Those two are money-
+  critical writes where a fake fallback would be actively dangerous; this is a browse/search read -
+  degrading to "prices temporarily unavailable, flight still shown" is the correct behavior, not a
+  cover-up.
+- **One Feign call each, not per-row**: `FlightInstanceRepository` gained a single derived query
+  (`findByFlight_DepartureAirportIdAndFlight_ArrivalAirportIdAndDepartureTimeBetweenAndStatus`) to
+  fetch the day's candidate instances, then exactly one bulk call to `flightService.enrichFlights`
+  (already existing, reused - same package-private-reuse pattern as `FlightScheduleService`) and one
+  bulk call to the new `FareClient`, regardless of how many flights matched. Same N+1-avoidance
+  discipline as everywhere else in this build.
+- **Result shape and filtering semantics**, deliberately reasoned through up front: `FlightSearchResultDto`
+  pairs one `FlightInstanceDto` with one `FareDto` - a flight instance with two matching fares
+  (e.g. ECONOMY and BUSINESS both within a price range) produces two result rows, not a nested list,
+  so cabin classes are directly comparable/sortable as peers. A flight instance with **no** fare
+  matching an active `cabinClass`/`minPrice`/`maxPrice` filter is excluded entirely. With **no**
+  such filter active, every matching instance is still returned, with `fare: null` if it has no
+  fares set up yet at all - so browsing an unpriced route isn't silently hidden by incomplete
+  catalog data.
+- **No gateway route change needed** - `/api/flights/**` already covers `/api/flights/search`, and
+  Spring's `PathPattern` matcher prioritizes literal path segments over `{id}` path-variable
+  segments regardless of declaration order. This was flagged during design as unverified and
+  specifically tested live below, not just assumed.
+
+Full reactor `mvn test` confirmed `BUILD SUCCESS`, with 8 new tests in `FlightSearchServiceTest`
+covering: multi-fare row expansion, cabin-class/min-price/max-price filtering, the unpriced-flight
+null-fare inclusion/exclusion split, the empty-short-circuit (`verifyNoInteractions` on both
+Feign/enrichment collaborators when no instances match at all), and both sort modes.
+
+Verified live end-to-end through the gateway: created a real city/airport pair, an airline, a
+flight, one flight instance on 2026-10-15, and two fares (ECONOMY $250, BUSINESS $800). Confirmed,
+in order: (1) with no fares yet, the flight still appeared with `fare: null`; (2) after adding
+fares, no-filter search returned exactly 2 rows, one per cabin class; (3) `cabinClass=ECONOMY`,
+`minPrice=500`, and `maxPrice=300` each correctly isolated the one matching fare; (4)
+`sortBy=price` returned ascending (250 before 800); (5) a wrong date and a reversed route each
+correctly returned `[]`; (6) `GET /api/flights/{id}` still resolves correctly and was not swallowed
+by the new `/search` route, confirming the routing-precedence assumption above was correct in
+practice, not just in theory. All test data cleaned from the shared dev database afterward.
+
+**Known limitation**: search only matches flights with `status = SCHEDULED` on the given calendar
+date by departure time - no multi-city, no return-leg, no nearby-date suggestions, no seat-
+availability check (a search result can point to a flight instance with zero seats left; that's
+only discovered at booking time). Real future work, not attempted here - this stage closes the
+"can't search at all" gap, not the "search is as smart as a real GDS" gap.
+
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 
 - Test coverage is service-layer only — controllers and Spring Data repository interfaces aren't

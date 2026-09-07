@@ -72,4 +72,8 @@ public class FareService {
     public List<FareDto> getAllFares() {
         return fareRepository.findAll().stream().map(FareMapper::toDto).toList();
     }
+
+    public List<FareDto> getFaresByFlightIds(List<Long> flightIds) {
+        return fareRepository.findAllByFlightIdIn(flightIds).stream().map(FareMapper::toDto).toList();
+    }
 }

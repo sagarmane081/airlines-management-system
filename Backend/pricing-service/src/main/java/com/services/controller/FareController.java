@@ -31,7 +31,10 @@ public class FareController {
     }
 
     @GetMapping
-    public ResponseEntity<List<FareDto>> getAllFares() {
-        return ResponseEntity.ok(fareService.getAllFares());
+    public ResponseEntity<List<FareDto>> getAllFares(@RequestParam(required = false) List<Long> flightIds) {
+        List<FareDto> fares = (flightIds == null || flightIds.isEmpty())
+                ? fareService.getAllFares()
+                : fareService.getFaresByFlightIds(flightIds);
+        return ResponseEntity.ok(fares);
     }
 }

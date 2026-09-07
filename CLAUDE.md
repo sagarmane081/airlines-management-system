@@ -775,6 +775,32 @@ noted below.
   one) — a genuine reminder that editing near an existing block without reading its surrounding
   structure first can silently duplicate rather than merge.
 
+- **Flight search (`GET /api/flights/search`) added as a pure read/aggregation feature, no new
+  entities.** `pricing-service` gained a bulk `GET /api/fares?flightIds=1,2,3` lookup
+  (`FareRepository.findAllByFlightIdIn`), reusing the existing endpoint path with an optional param
+  — same shape as every other bulk-lookup endpoint in this codebase. `flight-ops-service`'s new
+  `FareClient` deliberately **does** get a circuit-breaker fallback (`List.of()`), unlike
+  `PricingClient`/`PaymentClient` in `booking-service` — those back money-critical writes where a
+  fake fallback would be dangerous; this backs a browse/search read, where "prices temporarily
+  unavailable, flight still shown" is correct degradation, not a cover-up. One derived-query repo
+  method (`FlightInstanceRepository.findByFlight_DepartureAirportIdAndFlight_ArrivalAirportIdAndDepartureTimeBetweenAndStatus`)
+  plus exactly one bulk call each to the already-existing `FlightService.enrichFlights` (made
+  package-private for reuse, same pattern as `FlightScheduleService`) and the new `FareClient`,
+  regardless of result-set size — the same N+1-avoidance discipline as every list endpoint in this
+  project.
+- **Search result shape: one row per matching fare, not a nested list** — `FlightSearchResultDto`
+  pairs one `FlightInstanceDto` with one `FareDto`, so a flight instance with both an ECONOMY and a
+  BUSINESS fare within an active price range produces two directly-comparable/sortable result rows.
+  A flight instance with **no** fare matching an active `cabinClass`/`minPrice`/`maxPrice` filter is
+  excluded entirely; with **no** such filter active, every matching instance is still returned, with
+  `fare: null` if it has no fares set up yet — so an unpriced route doesn't vanish from browsing.
+- **Confirmed live, not just assumed: no gateway route collision between `/api/flights/search` and
+  `/api/flights/{id}`.** `/api/flights/**` already covers the new path in `api-gateway`'s existing
+  route table, and Spring's `PathPattern` matcher prioritizes literal path segments over `{id}`
+  path-variable segments regardless of controller declaration order — verified by calling both
+  `/api/flights/search?...` and `/api/flights/10` through the real gateway in the same session and
+  getting the correct handler for each, not inferred from documentation alone.
+
 ## Known gaps (in-progress build, not silently "fix")
 
 - Services are still directly reachable bypassing `api-gateway` — the trusted-header authorization

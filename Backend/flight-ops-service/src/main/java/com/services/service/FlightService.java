@@ -63,8 +63,10 @@ public class FlightService {
      * Enriches a whole batch of flights with exactly one Feign call to airline-core-service and
      * one to location-service, regardless of how many flights are in the list - avoids the N+1
      * (previously up to 3 calls per row) that {@link #enrichFlight} has for a single flight.
+     * Package-private, not private - FlightSearchService reuses this the same way
+     * FlightScheduleService reuses enrichFlight, to avoid reintroducing the N+1 it exists to fix.
      */
-    private List<FlightDto> enrichFlights(List<Flight> flights) {
+    List<FlightDto> enrichFlights(List<Flight> flights) {
         if (flights.isEmpty()) {
             return List.of();
         }
