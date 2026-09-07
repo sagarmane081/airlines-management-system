@@ -134,8 +134,9 @@ noted below.
   AVAILABLE→BOOKED) — it would NOT be sufficient for an event with a cumulative effect (e.g. "add
   $10 to balance"), which needs a real dedup-by-event-ID store instead. `notification-service` is a
   known, deliberate exception: it has no database by design, so a redelivered event still produces
-  a duplicate log line — acceptable for a simulated log statement, would need a real dedup
-  mechanism if it ever sent an actual notification.
+  a duplicate log line — and now, since real email delivery was added, a duplicate email too. Still
+  an accepted trade-off given the no-database design, not silently forgotten — see the real-email
+  entry below for the current state of this gap.
 - **Proving idempotency needed a different technique than the concurrency test** — forcing genuine
   Kafka redelivery live (via a relaxed producer-side guard + real HTTP calls) produced logs that
   were impossible to read reliably: Hibernate's own dirty-checking silently skips a no-op UPDATE
@@ -435,6 +436,44 @@ noted below.
   Restarted `payment-service`, waited for Eureka's registry cache to catch up, and confirmed a
   fresh booking attempt succeeded normally on the very next try — proving the fix doesn't affect
   the happy path once the dependency recovers.
+- **Real email delivery required threading a customer's email through three services, not just
+  adding `spring-boot-starter-mail`.** `BookingConfirmedEvent` never carried a recipient address at
+  all. The gateway already forwards `X-User-Email` (alongside `X-User-Id`/`X-User-Roles`), so
+  `booking-service` reads it for free at booking creation - but the email has to survive from that
+  original HTTP request all the way to `PaymentEventConsumer.onPaymentCompleted`, an unrelated Kafka
+  consumer invocation that runs later. That meant persisting it: `Booking.userEmail` (stamped like
+  `userId`), then threading it through `OutboxEvent.customerEmail` → `BookingConfirmedEvent
+  .customerEmail` → `notification-service`'s new `EmailService`. Three services touched
+  (`common-lib`, `booking-service`, `notification-service`) for what looked at first like a
+  one-service change.
+- **MailHog chosen over real Gmail SMTP specifically to avoid needing real credentials** - runs as a
+  standalone container (`docker run -d --name mailhog -p 1025:1025 -p 8025:8025 mailhog/mailhog`),
+  same pattern as Kafka/MySQL/Zipkin. Accepts any SMTP connection with no auth
+  (`spring.mail.properties.mail.smtp.auth: false`), captures every send instead of delivering it,
+  and exposes both a web UI and a REST API (`GET http://localhost:8025/api/v2/messages`) to inspect
+  what actually got "sent" - genuine SMTP protocol exercise end-to-end without a real inbox or a
+  secret in `config-repo`.
+- **`EmailService` wraps a single failure per event, and `BookingConfirmedEventConsumer` wraps the
+  call to it, so an SMTP outage degrades gracefully at two levels**: a missing `customerEmail`
+  (old data, or a future event source that doesn't set it) just skips the send with a warning log,
+  and any `RuntimeException` from the send itself (SMTP unreachable, etc.) is caught in the
+  consumer and logged rather than crashing the Kafka listener - same "one failure shouldn't take
+  down the whole handler" shape already used for seat-service's booking-confirmed processing.
+  Redelivery still has no dedup here (a known, accepted limitation since Stage 10 for the log line;
+  now the same trade-off extends to the email itself - a redelivered event sends a second copy).
+- **`config-repo/notification-service.yml` didn't exist until this stage** - notification-service
+  had `spring-cloud-starter-config` as a dependency from day one but nothing to fetch, since it
+  previously needed zero service-specific settings. Confirmed the new file was actually being
+  served correctly via `GET http://localhost:8888/notification-service/default` before assuming the
+  SMTP config was reaching the service - config-server's native-profile filesystem serving picks up
+  a brand-new file with no restart needed, unlike a shared `config-repo/application.yml` change,
+  which does need every already-running service restarted.
+- **Verified live with a full real saga, not a mocked send**: created a booking through the gateway
+  (confirmed `userEmail` correctly stamped from the JWT), confirmed the payment, and polled
+  MailHog's REST API until the confirmation email appeared - correct `From`, correct `To` (the real
+  customer email, not a placeholder), correct subject (`Booking Confirmed - #<id>`), and correct
+  body content (booking ID, flight instance, seat numbers). Cleaned up via MailHog's own
+  `DELETE /api/v1/messages` alongside the usual database cleanup.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.

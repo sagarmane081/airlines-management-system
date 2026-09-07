@@ -46,6 +46,8 @@ public class OutboxEvent {
     @Column(name = "seat_instance_id")
     private List<Long> seatInstanceIds = new ArrayList<>();
 
+    private String customerEmail;
+
     private boolean published;
 
     private LocalDateTime createdAt;

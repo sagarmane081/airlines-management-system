@@ -31,7 +31,7 @@ class OutboxRelayTest {
     private OutboxRelay outboxRelay;
 
     private OutboxEvent unpublishedEvent() {
-        return new OutboxEvent(1L, 5L, 10L, List.of(20L), false, LocalDateTime.now());
+        return new OutboxEvent(1L, 5L, 10L, List.of(20L), "customer@example.com", false, LocalDateTime.now());
     }
 
     @Test

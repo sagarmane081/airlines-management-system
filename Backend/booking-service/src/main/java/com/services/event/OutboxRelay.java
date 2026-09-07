@@ -44,7 +44,8 @@ public class OutboxRelay {
     public void relayOne(OutboxEvent outboxEvent) {
         try {
             bookingEventProducer.publish(new BookingConfirmedEvent(
-                            outboxEvent.getBookingId(), outboxEvent.getFlightInstanceId(), outboxEvent.getSeatInstanceIds()))
+                            outboxEvent.getBookingId(), outboxEvent.getFlightInstanceId(), outboxEvent.getSeatInstanceIds(),
+                            outboxEvent.getCustomerEmail()))
                     .get(5, TimeUnit.SECONDS);
             outboxEvent.setPublished(true);
             outboxEventRepository.save(outboxEvent);

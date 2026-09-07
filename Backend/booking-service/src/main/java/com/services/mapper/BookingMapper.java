@@ -9,6 +9,7 @@ public class BookingMapper {
         BookingDto dto = new BookingDto();
         dto.setId(booking.getId());
         dto.setUserId(booking.getUserId());
+        dto.setUserEmail(booking.getUserEmail());
         dto.setFlightInstanceId(booking.getFlightInstanceId());
         dto.setFareId(booking.getFareId());
         dto.setPassengers(booking.getPassengers().stream().map(PassengerMapper::toDto).toList());

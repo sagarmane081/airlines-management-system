@@ -24,6 +24,7 @@ without re-reading the whole conversation history.
 | 15 | Aircraft and Airport entities — Flight now routes by airport, FlightInstance gets an aircraft | ✅ Done |
 | 16 | Airline-ownership authorization — an owner can only manage their own airline's data | ✅ Done |
 | 17 | Saga compensation for payment-initiation failure — a booking is cancelled, not stuck, if payment can't start | ✅ Done |
+| 18 | Real notification delivery — booking confirmation sends an actual email via MailHog | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -405,6 +406,38 @@ with 2 new `BookingServiceTest` cases covering single- and multi-passenger compe
 **Known limitation, not fixed by this stage**: the compensation itself is best-effort — if the
 `releaseSeat` call fails during compensation (seat-service also down, say), that seat is left stuck
 `HELD` with no retry, the same unsolved edge the multi-seat rollback already had.
+
+## Stage 18 — Real notification delivery
+
+Closed the last item from the original course-code comparison: `notification-service` previously
+just logged a line on booking confirmation. It now sends a real email via SMTP, verified against
+MailHog (a local, no-credentials-needed SMTP catcher) rather than a real inbox.
+
+**Bigger than "add a mail dependency" because `BookingConfirmedEvent` never carried a recipient at
+all.** The gateway already forwards `X-User-Email`, so `booking-service` reads it for free at
+booking creation — but it has to survive from that original HTTP request all the way to
+`PaymentEventConsumer.onPaymentCompleted`, an unrelated async Kafka consumer invocation. That meant
+persisting it: `Booking.userEmail` (stamped like `userId`), threaded through
+`OutboxEvent.customerEmail` → `BookingConfirmedEvent.customerEmail` → notification-service's new
+`EmailService`. Three services touched for what looked at first like a one-service change.
+
+**MailHog runs as a standalone container**, same pattern as Kafka/MySQL/Zipkin — accepts any SMTP
+connection with no auth, captures every send instead of delivering it, and exposes a REST API to
+inspect what was "sent." Chosen specifically to avoid needing real Gmail credentials.
+
+`EmailService` skips sending (with a warning log) if `customerEmail` is missing, and
+`BookingConfirmedEventConsumer` catches any send failure so an SMTP outage can't crash the Kafka
+listener — same "one failure shouldn't take down the whole handler" shape already used elsewhere.
+Redelivery still has no dedup in `notification-service` (unchanged since Stage 10, now extended
+from "duplicate log line" to "duplicate email") — an accepted trade-off given its no-database
+design, not a new gap.
+
+Verified live with a full real saga: created a booking through the gateway (confirmed `userEmail`
+correctly stamped from the JWT), confirmed the payment, and polled MailHog's REST API until the
+confirmation email appeared with the correct `From`, the real customer's `To`, the right subject
+(`Booking Confirmed - #<id>`), and correct body content. Full reactor `mvn test` confirmed
+`BUILD SUCCESS`, with `notification-service` getting real test coverage (`EmailServiceTest`,
+`BookingConfirmedEventConsumerTest`) for the first time — it had zero tests before this stage.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 

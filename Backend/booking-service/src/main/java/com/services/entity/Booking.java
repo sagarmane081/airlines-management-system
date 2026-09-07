@@ -30,6 +30,8 @@ public class Booking {
 
     private Long userId;
 
+    private String userEmail;
+
     private Long flightInstanceId;
 
     private Long fareId;

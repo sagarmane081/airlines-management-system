@@ -37,6 +37,7 @@ class PaymentEventConsumerTest {
     private Booking pendingBooking() {
         Booking booking = new Booking();
         booking.setId(1L);
+        booking.setUserEmail("customer@example.com");
         booking.setFlightInstanceId(10L);
         booking.setStatus(BookingStatus.PENDING);
 
@@ -67,6 +68,7 @@ class PaymentEventConsumerTest {
         assertEquals(TicketStatus.ISSUED, booking.getPassengers().get(0).getTicket().getStatus());
         verify(bookingRepository, times(1)).save(any(Booking.class));
         verify(outboxEventRepository, times(1)).save(argThat((OutboxEvent e) ->
-                e.getBookingId().equals(1L) && e.getSeatInstanceIds().equals(List.of(20L)) && !e.isPublished()));
+                e.getBookingId().equals(1L) && e.getSeatInstanceIds().equals(List.of(20L)) && !e.isPublished()
+                        && "customer@example.com".equals(e.getCustomerEmail())));
     }
 }

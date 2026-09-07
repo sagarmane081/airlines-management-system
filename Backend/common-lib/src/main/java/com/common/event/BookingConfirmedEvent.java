@@ -14,4 +14,5 @@ public class BookingConfirmedEvent {
     private Long bookingId;
     private Long flightInstanceId;
     private List<Long> seatInstanceIds = new ArrayList<>();
+    private String customerEmail;
 }
