@@ -4,7 +4,9 @@ import com.common.dto.AirlineDto;
 import com.common.dto.FareDto;
 import com.services.client.FlightClient;
 import com.services.dto.FlightOwnerView;
+import com.services.entity.BaggagePolicy;
 import com.services.entity.Fare;
+import com.services.entity.FareRules;
 import com.services.exception.ForbiddenException;
 import com.services.exception.ResourceNotFoundException;
 import com.services.mapper.FareMapper;
@@ -34,7 +36,20 @@ public class FareService {
         FlightOwnerView flight = flightClient.getFlightById(fareDto.getFlightId());
         requireAirlineOwnership(flight.getAirline(), requesterId, requesterRole);
 
-        Fare saved = fareRepository.save(FareMapper.toEntity(fareDto));
+        Fare fare = FareMapper.toEntity(fareDto);
+
+        if (fareDto.getFareRules() != null) {
+            FareRules fareRules = FareMapper.toEntity(fareDto.getFareRules());
+            fareRules.setFare(fare);
+            fare.setFareRules(fareRules);
+        }
+        if (fareDto.getBaggagePolicy() != null) {
+            BaggagePolicy baggagePolicy = FareMapper.toEntity(fareDto.getBaggagePolicy());
+            baggagePolicy.setFare(fare);
+            fare.setBaggagePolicy(baggagePolicy);
+        }
+
+        Fare saved = fareRepository.save(fare);
         return FareMapper.toDto(saved);
     }
 

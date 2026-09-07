@@ -25,6 +25,7 @@ without re-reading the whole conversation history.
 | 16 | Airline-ownership authorization — an owner can only manage their own airline's data | ✅ Done |
 | 17 | Saga compensation for payment-initiation failure — a booking is cancelled, not stuck, if payment can't start | ✅ Done |
 | 18 | Real notification delivery — booking confirmation sends an actual email via MailHog | ✅ Done |
+| 19 | FareRules + BaggagePolicy — first of the structural/domain-gap arc closing the course-code comparison | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -438,6 +439,36 @@ confirmation email appeared with the correct `From`, the real customer's `To`, t
 (`Booking Confirmed - #<id>`), and correct body content. Full reactor `mvn test` confirmed
 `BUILD SUCCESS`, with `notification-service` getting real test coverage (`EmailServiceTest`,
 `BookingConfirmedEventConsumerTest`) for the first time — it had zero tests before this stage.
+
+## Stage 19 — FareRules + BaggagePolicy (structural/domain-gap arc, part 1 of 4)
+
+First stage of a larger arc closing the remaining structural/domain gaps from the course-code
+comparison, targeted at making this project's backend a genuine flagship piece — not just resilience
+patterns, but real domain richness too. Planned order: FareRules/BaggagePolicy (this stage) → seat/
+cabin modeling → flight schedules → richer ancillary domain.
+
+`Fare` was flat (just price/currency/cabin class) — no refund/change policy, no baggage allowance.
+Added `FareRules` (`refundable`, `changeable`, `cancellationFee`, `changeFee`,
+`refundDeadlineHours`, `changeDeadlineHours`) and `BaggagePolicy` (`cabinBaggageAllowanceKg`,
+`checkedBaggageAllowanceKg`, `checkedBaggagePieces`, `extraBaggageFeePerKg`), matching the original
+course design's intent without copying its padding.
+
+Modeled as optional nested fields on `FareDto`, not independent CRUD resources — same reasoning as
+`Passenger`/`Ticket` on `Booking`: a baggage policy without a fare is meaningless. Real `@OneToOne`
+relationships with cascade, so creating a `Fare` with both nested objects persists all three rows in
+one `save()` call. Both stay nullable — a fare created without them just has `null` fields, no
+invented defaults.
+
+Since `FareDto` lives in `common-lib`, `booking-service` (which already Feign-calls
+`pricing-service.getFareById`) picked up the new fields automatically with zero code changes on its
+side — same jar, same class, no deserialization compatibility question the way the earlier
+`FlightOwnerView` projection needed.
+
+Verified live through the gateway: created a fare with both nested objects populated (confirmed
+correct round-trip on `GET`), and a second fare with neither (confirmed both stay `null`, not
+defaulted). Full reactor `mvn test` confirmed `BUILD SUCCESS`, with `FareServiceTest` gaining 2 new
+cases (linked-when-provided, null-when-not-provided) on top of the existing ownership-check
+coverage.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 

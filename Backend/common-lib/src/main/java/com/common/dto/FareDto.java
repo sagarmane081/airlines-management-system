@@ -15,4 +15,6 @@ public class FareDto {
     private String cabinClass;
     private BigDecimal price;
     private String currency;
+    private FareRulesDto fareRules;
+    private BaggagePolicyDto baggagePolicy;
 }

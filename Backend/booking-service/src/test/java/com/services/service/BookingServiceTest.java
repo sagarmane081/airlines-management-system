@@ -71,7 +71,7 @@ class BookingServiceTest {
 
     @Test
     void createBookingUsesFarePriceHoldsSeatAndStampsRequesterAsOwner() {
-        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
             Booking b = inv.getArgument(0);
             if (b.getId() == null) {
@@ -96,7 +96,7 @@ class BookingServiceTest {
 
     @Test
     void createBookingMultipliesFareByPassengerCountAndHoldsEverySeat() {
-        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
             Booking b = inv.getArgument(0);
             if (b.getId() == null) {
@@ -117,7 +117,7 @@ class BookingServiceTest {
 
     @Test
     void createBookingReleasesAlreadyHeldSeatsWhenALaterSeatFails() {
-        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         doNothing().when(seatClient).holdSeat(3L);
         doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(4L);
 
@@ -132,7 +132,7 @@ class BookingServiceTest {
 
     @Test
     void createBookingStillThrowsOriginalErrorEvenIfRollbackReleaseFails() {
-        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         doNothing().when(seatClient).holdSeat(3L);
         doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(4L);
         doThrow(new RuntimeException("seat-service down")).when(seatClient).releaseSeat(3L);
@@ -144,7 +144,7 @@ class BookingServiceTest {
 
     @Test
     void createBookingCancelsBookingAndReleasesSeatWhenPaymentInitiationFails() {
-        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
             Booking b = inv.getArgument(0);
             if (b.getId() == null) {
@@ -164,7 +164,7 @@ class BookingServiceTest {
 
     @Test
     void createBookingReleasesEverySeatWhenPaymentInitiationFailsForMultiPassengerBooking() {
-        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(inv -> {
             Booking b = inv.getArgument(0);
             if (b.getId() == null) {
@@ -182,7 +182,7 @@ class BookingServiceTest {
 
     @Test
     void createBookingFailsCleanlyWhenSeatConflictIsRaw() {
-        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         doThrow(mock(FeignException.Conflict.class)).when(seatClient).holdSeat(3L);
 
         assertThrows(SeatUnavailableException.class, () -> bookingService.createBooking(request(), 42L, "test@example.com"));
@@ -192,7 +192,7 @@ class BookingServiceTest {
 
     @Test
     void createBookingFailsCleanlyWhenSeatConflictIsWrappedByCircuitBreaker() {
-        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         FeignException.Conflict conflict = mock(FeignException.Conflict.class);
         doThrow(new NoFallbackAvailableException("no fallback", conflict)).when(seatClient).holdSeat(3L);
 
@@ -202,7 +202,7 @@ class BookingServiceTest {
 
     @Test
     void createBookingRethrowsWhenNoFallbackCauseIsNotASeatConflict() {
-        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"));
+        when(pricingClient.getFareById(2L)).thenReturn(new FareDto(2L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null));
         NoFallbackAvailableException unrelated = new NoFallbackAvailableException("seat-service down", new RuntimeException("timeout"));
         doThrow(unrelated).when(seatClient).holdSeat(3L);
 

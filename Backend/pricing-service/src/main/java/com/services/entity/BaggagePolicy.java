@@ -1,10 +1,10 @@
 package com.services.entity;
 
-import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
@@ -14,27 +14,25 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 
 @Entity
-@Table(name = "fares")
+@Table(name = "baggage_policies")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class Fare {
+public class BaggagePolicy {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Long flightId;
+    private BigDecimal cabinBaggageAllowanceKg;
 
-    private String cabinClass;
+    private BigDecimal checkedBaggageAllowanceKg;
 
-    private BigDecimal price;
+    private Integer checkedBaggagePieces;
 
-    private String currency;
+    private BigDecimal extraBaggageFeePerKg;
 
-    @OneToOne(mappedBy = "fare", cascade = CascadeType.ALL, orphanRemoval = true)
-    private FareRules fareRules;
-
-    @OneToOne(mappedBy = "fare", cascade = CascadeType.ALL, orphanRemoval = true)
-    private BaggagePolicy baggagePolicy;
+    @OneToOne
+    @JoinColumn(name = "fare_id")
+    private Fare fare;
 }

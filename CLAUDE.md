@@ -474,6 +474,21 @@ noted below.
   customer email, not a placeholder), correct subject (`Booking Confirmed - #<id>`), and correct
   body content (booking ID, flight instance, seat numbers). Cleaned up via MailHog's own
   `DELETE /api/v1/messages` alongside the usual database cleanup.
+- **`FareRules`/`BaggagePolicy` are "detail" attachments, not independent resources — no separate
+  CRUD endpoints, same reasoning as `Passenger`/`Ticket` on `Booking`.** A baggage policy without a
+  fare is meaningless, so both are optional nested fields on `FareDto`, created atomically in one
+  `POST /api/fares` call. Real `@OneToOne` relationships: `Fare` holds `mappedBy` references with
+  `cascade = ALL, orphanRemoval = true`, `FareRules`/`BaggagePolicy` each own the `@JoinColumn` back
+  to `Fare` — saving the `Fare` cascades both children automatically, no extra repository calls
+  needed, identical shape to `Booking` → `Passenger` → `Ticket`. Both stay nullable on `FareDto`; a
+  fare created without them just has `fareRules: null, baggagePolicy: null` — no defaults invented.
+  Kept the relationship-linking logic (`fareRules.setFare(fare); fare.setFareRules(fareRules);`) in
+  the service layer, not the mapper — same split already used for `Passenger`/`Booking`, keeps
+  `FareMapper` a pure field-mapping utility.
+- **`FareDto` (and its two new nested DTOs) live in `common-lib`, so `booking-service` — which
+  already Feign-calls `pricing-service.getFareById` — automatically gains the new fields with zero
+  changes on its side.** Not a projection like `FlightOwnerView`; both sides share the exact same
+  class from the exact same jar, so there's no deserialization-compatibility question to verify.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.

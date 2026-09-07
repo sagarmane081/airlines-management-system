@@ -1,7 +1,9 @@
 package com.services.service;
 
 import com.common.dto.AirlineDto;
+import com.common.dto.BaggagePolicyDto;
 import com.common.dto.FareDto;
+import com.common.dto.FareRulesDto;
 import com.services.client.FlightClient;
 import com.services.dto.FlightOwnerView;
 import com.services.entity.Fare;
@@ -40,9 +42,9 @@ class FareServiceTest {
 
     @Test
     void createFareSavesAndReturnsDtoForOwningAirlineOwner() {
-        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null);
         when(flightClient.getFlightById(1L)).thenReturn(flightOwnedBy(42L));
-        Fare saved = new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        Fare saved = new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null);
         when(fareRepository.save(any(Fare.class))).thenReturn(saved);
 
         FareDto result = fareService.createFare(request, 42L, "ROLE_AIRLINE_OWNER");
@@ -53,7 +55,7 @@ class FareServiceTest {
 
     @Test
     void createFareThrowsForbiddenForCustomer() {
-        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null);
 
         assertThrows(ForbiddenException.class, () -> fareService.createFare(request, 1L, "ROLE_CUSTOMER"));
         verify(fareRepository, never()).save(any());
@@ -62,7 +64,7 @@ class FareServiceTest {
 
     @Test
     void createFareThrowsForbiddenForNonOwningAirlineOwner() {
-        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null);
         when(flightClient.getFlightById(1L)).thenReturn(flightOwnedBy(42L));
 
         assertThrows(ForbiddenException.class, () -> fareService.createFare(request, 999L, "ROLE_AIRLINE_OWNER"));
@@ -71,9 +73,9 @@ class FareServiceTest {
 
     @Test
     void createFareSucceedsForSystemAdminEvenWhenNotOwner() {
-        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null);
         when(flightClient.getFlightById(1L)).thenReturn(flightOwnedBy(42L));
-        Fare saved = new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        Fare saved = new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null);
         when(fareRepository.save(any(Fare.class))).thenReturn(saved);
 
         FareDto result = fareService.createFare(request, 999L, "ROLE_SYSTEM_ADMIN");
@@ -82,8 +84,35 @@ class FareServiceTest {
     }
 
     @Test
+    void createFareLinksFareRulesAndBaggagePolicyWhenProvided() {
+        FareRulesDto fareRulesDto = new FareRulesDto(null, true, false, BigDecimal.valueOf(50), null, 24, null);
+        BaggagePolicyDto baggagePolicyDto = new BaggagePolicyDto(null, BigDecimal.valueOf(7), BigDecimal.valueOf(23), 1, BigDecimal.valueOf(10));
+        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", fareRulesDto, baggagePolicyDto);
+        when(flightClient.getFlightById(1L)).thenReturn(flightOwnedBy(42L));
+        when(fareRepository.save(any(Fare.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        FareDto result = fareService.createFare(request, 42L, "ROLE_AIRLINE_OWNER");
+
+        assertTrue(result.getFareRules().isRefundable());
+        assertEquals(24, result.getFareRules().getRefundDeadlineHours());
+        assertEquals(BigDecimal.valueOf(10), result.getBaggagePolicy().getExtraBaggageFeePerKg());
+    }
+
+    @Test
+    void createFareLeavesFareRulesAndBaggagePolicyNullWhenNotProvided() {
+        FareDto request = new FareDto(null, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null);
+        when(flightClient.getFlightById(1L)).thenReturn(flightOwnedBy(42L));
+        when(fareRepository.save(any(Fare.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        FareDto result = fareService.createFare(request, 42L, "ROLE_AIRLINE_OWNER");
+
+        assertNull(result.getFareRules());
+        assertNull(result.getBaggagePolicy());
+    }
+
+    @Test
     void getFareByIdReturnsDtoWhenFound() {
-        Fare fare = new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD");
+        Fare fare = new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null);
         when(fareRepository.findById(1L)).thenReturn(Optional.of(fare));
 
         FareDto result = fareService.getFareById(1L);
@@ -101,8 +130,8 @@ class FareServiceTest {
     @Test
     void getAllFaresMapsEveryRow() {
         when(fareRepository.findAll()).thenReturn(List.of(
-                new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD"),
-                new Fare(2L, 1L, "BUSINESS", BigDecimal.valueOf(800), "USD")));
+                new Fare(1L, 1L, "ECONOMY", BigDecimal.valueOf(250), "USD", null, null),
+                new Fare(2L, 1L, "BUSINESS", BigDecimal.valueOf(800), "USD", null, null)));
 
         List<FareDto> result = fareService.getAllFares();
 
