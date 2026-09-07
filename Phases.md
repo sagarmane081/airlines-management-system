@@ -27,6 +27,7 @@ without re-reading the whole conversation history.
 | 18 | Real notification delivery — booking confirmation sends an actual email via MailHog | ✅ Done |
 | 19 | FareRules + BaggagePolicy — first of the structural/domain-gap arc closing the course-code comparison | ✅ Done |
 | 20 | SeatMap + CabinClass + Seat — second of the arc; SeatInstance now backed by a real seat catalog | ✅ Done |
+| 21 | FlightSchedule — third of the arc; recurring patterns that materialize real FlightInstances | ✅ Done |
 | — | Frontend | ⬜ Not started at all |
 
 ## Currently running (local dev)
@@ -521,6 +522,38 @@ nested enrichment round-tripped correctly), exercised hold/release, and booked i
 `booking-service`'s real saga to confirm zero regression in the existing flow. Full reactor
 `mvn test` confirmed `BUILD SUCCESS`, including the concurrency test, with 20 new tests across
 `SeatMapServiceTest`/`CabinClassServiceTest`/`SeatServiceTest`.
+
+## Stage 21 — FlightSchedule (structural/domain-gap arc, part 3 of 4)
+
+`FlightSchedule` describes a recurring pattern for a `Flight` - "AI101 operates Mon/Wed/Fri,
+10:00–12:00 local, Jan 1 through Jan 14." Deliberately not the same thing as a `FlightInstance`
+(one real, bookable occurrence): a schedule doesn't auto-generate instances on save. A separate
+`POST /api/flight-schedules/{id}/generate-instances` walks every date in the range whose day of
+week matches `operatingDays` and materializes one `FlightInstance` per match.
+
+Generation is idempotent by construction - a per-date existence check before each insert means
+re-running it (after widening a schedule's range, or just retrying) only creates what's missing,
+same discipline as every other idempotent write in this codebase. Unlike the original course
+design, `FlightSchedule` doesn't duplicate the flight's airports - a schedule is a pattern for an
+*existing* flight that already fixes the route, so it only carries what's genuinely new: time of
+day, day-of-week pattern, and a validity date range.
+
+Extracted a second `AirlineOwnershipChecker` (flight-ops-service's own, mirroring seat-service's
+Stage 20 one) and refactored `FlightService` to use it instead of its private copy - consistent
+application of "sibling classes authored together share the check" now that a second service needs
+it. Also made `FlightService.enrichFlight` reusable by `FlightScheduleService` directly (package-
+private, not private) rather than duplicating the three-Feign-call enrichment - the same pattern
+`AircraftService` already established by injecting `AirlineService` directly in airline-core-service.
+
+**Known, accepted simplification**: `generateInstances` assumes same-day arrival - a schedule that
+crosses midnight isn't handled. Documented directly in the method's own Javadoc.
+
+Verified live through the gateway: created a schedule (Mon/Wed/Fri, Jan 1–14 2026), generated
+instances and got back exactly the 6 correct dates (Jan 2, 5, 7, 9, 12, 14 - hand-verified against
+the calendar, since Jan 1 2026 is a Thursday), confirmed each carries the right `flightScheduleId`
+back-reference, and re-ran generation to confirm it returned empty rather than duplicating. Full
+reactor `mvn test` confirmed `BUILD SUCCESS`, with 7 new tests in `FlightScheduleServiceTest`
+covering day-of-week matching, the idempotency skip, and ownership gating.
 
 ## Known deliberate gaps (see `CLAUDE.md` for the full list)
 

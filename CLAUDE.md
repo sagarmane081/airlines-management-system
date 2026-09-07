@@ -539,6 +539,33 @@ noted below.
   null-safe unboxing (`Boolean.TRUE.equals(dto.getX())`) in the one direction (DTO → entity) that
   needs a real primitive again. Entities themselves keep primitive `boolean` - they're never
   JSON-deserialized directly, only built through mappers, so they were never at risk.
+- **`FlightSchedule` describes a recurring pattern; `FlightInstance` is a real, bookable occurrence
+  materialized from it - the two are deliberately not the same thing.** A schedule ("AI101 operates
+  Mon/Wed/Fri, 10:00–12:00 local, Jan 1–14") doesn't auto-generate instances on save; a separate
+  `POST /api/flight-schedules/{id}/generate-instances` walks every calendar date in the range whose
+  day-of-week is in `operatingDays` and creates one `FlightInstance` per match. This is idempotent
+  by construction (`FlightInstanceRepository.existsByFlightScheduleIdAndDepartureTime`, checked
+  per-date before inserting) - re-running generation after widening a schedule's date range, or
+  simply retrying, only creates the dates that don't already have an instance, same idempotent-write
+  discipline already used for the Kafka consumers and `confirmPayment`.
+- **`FlightSchedule` doesn't duplicate `departureAirportId`/`arrivalAirportId` the way the original
+  course design did.** A schedule is a temporal pattern for an *existing* `Flight`, which already
+  fixes the route - repeating the airports on the schedule too would just be a second place for them
+  to drift out of sync. Kept the schedule to only what's genuinely new: time-of-day, day-of-week
+  pattern, and a validity date range.
+- **Extracted a second `AirlineOwnershipChecker` in flight-ops-service, and refactored `FlightService`
+  to use it instead of its own private copy** - same reasoning as seat-service's Stage 20 utility
+  (sibling classes authored in the same stage sharing one check, not three-plus copies of it), now
+  applied consistently to the second service that needed it. Also made `FlightService.enrichFlight`
+  package-private so `FlightScheduleService` could reuse the exact same three-Feign-call enrichment
+  instead of duplicating it or building a redundant, only-partially-enriched `FlightDto` - the same
+  "inject the sibling service directly" pattern `AircraftService` already established with
+  `AirlineService` in airline-core-service.
+- **Known, accepted simplification: `generateInstances` assumes same-day arrival.** A schedule that
+  crosses midnight (departs 23:30, arrives 01:00 the next calendar day) isn't handled - `arrivalTime`
+  is always combined with the same date as `departureTime`. Real day-rollover handling is deferred,
+  not silently wrong-by-accident - documented directly in the method's own Javadoc so it's visible
+  at the call site, not just here.
 - **Git Bash on Windows mangles Unix-style absolute-path arguments** (like `/tmp/...` or
   `/opt/kafka/...`) passed to `docker run`/`docker exec`, silently rewriting them as Windows paths
   before Docker ever sees them — MSYS's automatic path conversion, not a Docker or Kafka bug.

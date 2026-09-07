@@ -38,4 +38,8 @@ public class FlightInstance {
     private FlightInstanceStatus status;
 
     private Long aircraftId;
+
+    @ManyToOne
+    @JoinColumn(name = "flight_schedule_id")
+    private FlightSchedule flightSchedule;
 }

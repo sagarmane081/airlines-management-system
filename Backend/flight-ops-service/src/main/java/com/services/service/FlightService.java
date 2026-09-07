@@ -49,7 +49,10 @@ public class FlightService {
         this.aircraftClient = aircraftClient;
     }
 
-    private FlightDto enrichFlight(Flight flight) {
+    // Package-private, not private - FlightScheduleService reuses this rather than duplicating
+    // the same three Feign calls, same reasoning as AircraftService calling AirlineService
+    // directly in airline-core-service.
+    FlightDto enrichFlight(Flight flight) {
         AirlineDto airline = airlineClient.getAirlineById(flight.getAirlineId());
         AirportDto departureAirport = locationClient.getAirportById(flight.getDepartureAirportId());
         AirportDto arrivalAirport = locationClient.getAirportById(flight.getArrivalAirportId());
@@ -96,26 +99,11 @@ public class FlightService {
         }
     }
 
-    /**
-     * A ROLE_AIRLINE_OWNER may only manage flights/instances belonging to their own airline -
-     * ROLE_SYSTEM_ADMIN bypasses this. The airline is already fetched via Feign for enrichment
-     * elsewhere in each caller, so this reuses that same call rather than making a second one.
-     */
-    private void requireAirlineOwnership(AirlineDto airline, Long requesterId, String requesterRole) {
-        if (ROLE_SYSTEM_ADMIN.equals(requesterRole)) {
-            return;
-        }
-        boolean isOwner = airline.getOwnerId() != null && airline.getOwnerId().equals(requesterId);
-        if (!isOwner) {
-            throw new ForbiddenException("Airline " + airline.getId() + " is not owned by the requesting user");
-        }
-    }
-
     public FlightDto createFlight(FlightDto flightDto, Long requesterId, String requesterRole) {
         requireAirlineManager(requesterRole);
         Long airlineId = flightDto.getAirline().getId();
         AirlineDto airline = airlineClient.getAirlineById(airlineId);
-        requireAirlineOwnership(airline, requesterId, requesterRole);
+        AirlineOwnershipChecker.requireAirlineOwnership(airline, requesterId, requesterRole);
 
         Flight saved = flightRepository.save(FlightMapper.toEntity(flightDto));
         AirportDto departureAirport = locationClient.getAirportById(saved.getDepartureAirportId());
@@ -140,7 +128,7 @@ public class FlightService {
                 .orElseThrow(() -> new ResourceNotFoundException("Flight not found with id: " + flightId));
 
         AirlineDto airline = airlineClient.getAirlineById(flight.getAirlineId());
-        requireAirlineOwnership(airline, requesterId, requesterRole);
+        AirlineOwnershipChecker.requireAirlineOwnership(airline, requesterId, requesterRole);
 
         FlightInstance instance = new FlightInstance();
         instance.setFlight(flight);

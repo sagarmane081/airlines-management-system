@@ -43,7 +43,7 @@ spring:
             - id: flight-ops-service
               uri: lb://flight-ops-service
               predicates:
-                - Path=/api/flights,/api/flights/**,/api/flight-instances,/api/flight-instances/**
+                - Path=/api/flights,/api/flights/**,/api/flight-instances,/api/flight-instances/**,/api/flight-schedules,/api/flight-schedules/**
             - id: booking-service
               uri: lb://booking-service
               predicates:

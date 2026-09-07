@@ -89,8 +89,8 @@ class FlightServiceTest {
     @Test
     void getAllFlightInstancesDedupesSharedFlightBeforeEnriching() {
         Flight flight = new Flight(1L, 10L, "AI101", 100L, 100L);
-        FlightInstance instance1 = new FlightInstance(1L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, null);
-        FlightInstance instance2 = new FlightInstance(2L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, null);
+        FlightInstance instance1 = new FlightInstance(1L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, null, null);
+        FlightInstance instance2 = new FlightInstance(2L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, null, null);
         when(flightInstanceRepository.findAll()).thenReturn(List.of(instance1, instance2));
 
         when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(airlineOwnedBy(42L)));
@@ -110,8 +110,8 @@ class FlightServiceTest {
     @Test
     void getAllFlightInstancesEnrichesAircraftInOneBulkCall() {
         Flight flight = new Flight(1L, 10L, "AI101", 100L, 100L);
-        FlightInstance instance1 = new FlightInstance(1L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, 500L);
-        FlightInstance instance2 = new FlightInstance(2L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, 500L);
+        FlightInstance instance1 = new FlightInstance(1L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, 500L, null);
+        FlightInstance instance2 = new FlightInstance(2L, flight, LocalDateTime.now(), LocalDateTime.now(), FlightInstanceStatus.SCHEDULED, 500L, null);
         when(flightInstanceRepository.findAll()).thenReturn(List.of(instance1, instance2));
 
         when(airlineClient.getAirlinesByIds(anyList())).thenReturn(List.of(airlineOwnedBy(42L)));

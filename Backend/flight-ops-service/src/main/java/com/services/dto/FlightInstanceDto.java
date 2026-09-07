@@ -18,4 +18,5 @@ public class FlightInstanceDto {
     private LocalDateTime arrivalTime;
     private FlightInstanceStatus status;
     private AircraftDto aircraft;
+    private Long flightScheduleId;
 }

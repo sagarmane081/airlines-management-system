@@ -28,6 +28,7 @@ public class FlightMapper {
         dto.setArrivalTime(instance.getArrivalTime());
         dto.setStatus(instance.getStatus());
         dto.setAircraft(aircraft);
+        dto.setFlightScheduleId(instance.getFlightSchedule() != null ? instance.getFlightSchedule().getId() : null);
         return dto;
     }
 
